@@ -60,17 +60,14 @@ def main():
                 # nc.drive_base_joint()
                 # nc.drive_elbow_joint()
                 # nc.drive_prismatic_joint()
-                # nc.drive_tweezer_joint()
+                nc.drive_tweezer_joint()
 
-                nc.drive_base_joint(reverse=True)
+                # nc.drive_base_joint(reverse=True)
                 # nc.drive_elbow_joint(reverse=True)
                 # nc.drive_prismatic_joint(reverse=True)
                 # nc.drive_tweezer_joint(reverse=True)
 
-                tt.rotate(300, reverse=False)
-                time.sleep(5)
-                tt.rotate(300, reverse=False)
-                time.sleep(5)
+                # tt.rotate(180, reverse=False)
 
                 nc.stop()
 
@@ -92,3 +89,5 @@ if __name__ == "__main__":
 
 
 # https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html
+
+# implement big brain algorithm that decides which rock to go for.
