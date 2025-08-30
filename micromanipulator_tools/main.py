@@ -52,6 +52,8 @@ def main():
     try:
         with NanoControl("COM19") as nc:
             with Turntable("COM17") as tt:
+                tt.rotate(60, reverse=False)
+
                 active_speed_profile = 1
 
                 nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
@@ -60,16 +62,20 @@ def main():
                 # nc.drive_base_joint()
                 # nc.drive_elbow_joint()
                 # nc.drive_prismatic_joint()
-                nc.drive_tweezer_joint()
+                # nc.drive_tweezers()
 
                 # nc.drive_base_joint(reverse=True)
                 # nc.drive_elbow_joint(reverse=True)
                 # nc.drive_prismatic_joint(reverse=True)
-                # nc.drive_tweezer_joint(reverse=True)
+                # nc.drive_tweezers(reverse=True)
 
-                # tt.rotate(180, reverse=False)
+                # for i in range(3):
+                #     nc.drive_base_joint(reverse=True)
+                #     time.sleep(5)
+                #     nc.drive_base_joint(reverse=False)
+                #     time.sleep(5)
 
-                nc.stop()
+                # nc.stop()
 
     except Exception as e:
         print(f"{e}")

@@ -1035,8 +1035,11 @@ class NanoControl:
         reverse: bool = False,
     ) -> str:
         """
-        Continuously drive the base joint (channel A) at the specified
-        rate. Calling this, or any other drive function will terminate
+        Continuously drive the base joint (revolute) counterclockwise;
+        postive θ1 on schematic.
+
+        The base joint (channel A) is driven at the specified rate.
+        Calling this, or any other drive function will terminate
         any previously running drive function.
 
         The total steps executed per interval equals the current speed
@@ -1056,9 +1059,8 @@ class NanoControl:
             interval_ms (int, optional): Time interval between movement
                 executions in milliseconds. Smaller values = faster
                 movement. Defaults to DEFAULT_DRIVE_INTERVAL_MS.
-            reverse (bool, optional): If True, drive in reverse
-                direction (clockwise). If False, drive anticlockwise.
-                Defaults to False.
+            reverse (bool, optional): Drives clockwise if True, defaults
+                to False.
 
         Returns:
             str: Response message from the device confirming the
@@ -1074,10 +1076,10 @@ class NanoControl:
 
         Example:
             # With speed profile base_joint = "c32":
-            nc.drive_base_joint()              # 32x1=32 steps forward
-            nc.drive_base_joint(5)             # 32x5=160 steps forward
-            nc.drive_base_joint(reverse=True)  # 32x1=32 steps reverse
-            nc.drive_base_joint(2, 100, True)  # 32x2=64 steps reverse
+            nc.drive_base_joint()              # 32x1=32 steps CCW
+            nc.drive_base_joint(5)             # 32x5=160 steps CCW
+            nc.drive_base_joint(reverse=True)  # 32x1=32 steps CW
+            nc.drive_base_joint(2, 100, True)  # 32x2=64 steps CW
         """
 
         final_multiplier = self._process_step_multiplier_and_direction(
@@ -1093,15 +1095,16 @@ class NanoControl:
         reverse: bool = False,
     ) -> str:
         """
-        Continuously drive the elbow joint (channel B).
+        Continuously drive the elbow joint (channel B) counterclockwise;
+        positive θ2 on schematic.
 
         Args:
             step_multiplier (int, optional): Multiplier for speed
                 profile steps. Defaults to DEFAULT_STEP_MULTIPLIER.
             interval_ms (int, optional): Time interval in milliseconds.
                 Defaults to DEFAULT_DRIVE_INTERVAL_MS.
-            reverse (bool, optional): If True, drive upwards.
-                Defaults to False.
+            reverse (bool, optional): Drives clockwise if True, defaults
+                to False.
 
         Returns:
             str: Device response confirming the command.
@@ -1118,8 +1121,10 @@ class NanoControl:
             See drive_base_joint() for detailed documentation.
         """
 
+        # Inverting the reverse input so the output aligns with the
+        # schematic convention.
         final_multiplier = self._process_step_multiplier_and_direction(
-            step_multiplier, reverse
+            step_multiplier, not reverse
         )
         return self._go(0, final_multiplier, 0, 0, interval_ms)
 
@@ -1131,15 +1136,16 @@ class NanoControl:
         reverse: bool = False,
     ) -> str:
         """
-        Continuously drive the prismatic joint (channel C).
+        Continuously drive the prismatic joint (channel C) outwards;
+        positive d3 on schematic.
 
         Args:
             step_multiplier (int, optional): Multiplier for speed
                 profile steps. Defaults to DEFAULT_STEP_MULTIPLIER.
             interval_ms (int, optional): Time interval in milliseconds.
                 Defaults to DEFAULT_DRIVE_INTERVAL_MS.
-            reverse (bool, optional): If True, drive in reverse.
-                Defaults to False.
+            reverse (bool, optional): Drives inwards if True, defaults
+                to False.
 
         Returns:
             str: Device response confirming the command.
@@ -1156,27 +1162,27 @@ class NanoControl:
             See drive_base_joint() for detailed documentation.
         """
         final_multiplier = self._process_step_multiplier_and_direction(
-            step_multiplier, reverse
+            step_multiplier, not reverse
         )
         return self._go(0, 0, final_multiplier, 0, interval_ms)
 
     @tested
-    def drive_tweezer_joint(
+    def drive_tweezers(
         self,
         step_multiplier: int = DEFAULT_STEP_MULTIPLIER,
         interval_ms: int = DEFAULT_DRIVE_INTERVAL_MS,
         reverse: bool = False,
     ) -> str:
         """
-        Continuously drive the tweezer joint (channel D).
+        Continuously drive the tweezer joint (channel D) to close.
 
         Args:
             step_multiplier (int, optional): Multiplier for speed
                 profile steps. Defaults to DEFAULT_STEP_MULTIPLIER.
             interval_ms (int, optional): Time interval in milliseconds.
                 Defaults to DEFAULT_DRIVE_INTERVAL_MS.
-            reverse (bool, optional): If True, drive in reverse.
-                Defaults to False.
+            reverse (bool, optional): Opens tweezers if True. Defaults
+                to False.
 
         Returns:
             str: Device response confirming the command.

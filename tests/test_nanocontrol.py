@@ -5897,9 +5897,13 @@ class TestNanoControl(unittest.TestCase):
             result = nc.drive_elbow_joint()
 
             # Should use defaults: step_multiplier=1, interval_ms=100, reverse=False
-            # Final multiplier should be 1 (positive, forward direction)
+            # Due to not reverse: reverse=False -> negative multiplier
             mock_go.assert_called_once_with(
-                0, 1, 0, 0, nc.DEFAULT_DRIVE_INTERVAL_MS
+                0,
+                -1,
+                0,
+                0,
+                nc.DEFAULT_DRIVE_INTERVAL_MS,  # Changed to -1
             )
             self.assertEqual(result, "OK")
 
@@ -5916,8 +5920,13 @@ class TestNanoControl(unittest.TestCase):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
                     result = nc.drive_elbow_joint(step_multiplier)
 
+                    # Due to not reverse: reverse=False (default) -> negative multiplier
                     mock_go.assert_called_once_with(
-                        0, step_multiplier, 0, 0, nc.DEFAULT_DRIVE_INTERVAL_MS
+                        0,
+                        -step_multiplier,
+                        0,
+                        0,
+                        nc.DEFAULT_DRIVE_INTERVAL_MS,  # Changed to negative
                     )
                     self.assertEqual(result, "OK")
 
@@ -5934,8 +5943,13 @@ class TestNanoControl(unittest.TestCase):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
                     result = nc.drive_elbow_joint(interval_ms=interval_ms)
 
+                    # Due to not reverse: reverse=False (default) -> negative multiplier
                     mock_go.assert_called_once_with(
-                        0, nc.DEFAULT_STEP_MULTIPLIER, 0, 0, interval_ms
+                        0,
+                        -nc.DEFAULT_STEP_MULTIPLIER,
+                        0,
+                        0,
+                        interval_ms,  # Changed to negative
                     )
                     self.assertEqual(result, "OK")
 
@@ -5948,10 +5962,10 @@ class TestNanoControl(unittest.TestCase):
         with patch.object(nc, "_go", return_value="OK") as mock_go:
             result = nc.drive_elbow_joint(reverse=True)
 
-            # Should use negative step multiplier for reverse (upwards)
+            # Should use positive step multiplier for reverse (upwards) due to not reverse
             mock_go.assert_called_once_with(
                 0,
-                -nc.DEFAULT_STEP_MULTIPLIER,
+                nc.DEFAULT_STEP_MULTIPLIER,  # Changed: now positive due to not reverse
                 0,
                 0,
                 nc.DEFAULT_DRIVE_INTERVAL_MS,
@@ -5965,10 +5979,30 @@ class TestNanoControl(unittest.TestCase):
         nc = NanoControl.__new__(NanoControl)
 
         test_cases = [
-            (5, 200, False, 5),  # Forward direction (downwards)
-            (10, 150, True, -10),  # Reverse direction (upwards)
-            (25, 300, False, 25),  # Forward direction
-            (50, 100, True, -50),  # Reverse direction
+            (
+                5,
+                200,
+                False,
+                -5,
+            ),  # Forward direction (downwards) - now negative due to not reverse
+            (
+                10,
+                150,
+                True,
+                10,
+            ),  # Reverse direction (upwards) - now positive due to not reverse
+            (
+                25,
+                300,
+                False,
+                -25,
+            ),  # Forward direction - now negative due to not reverse
+            (
+                50,
+                100,
+                True,
+                50,
+            ),  # Reverse direction - now positive due to not reverse
         ]
 
         for step_mult, interval, reverse, expected_mult in test_cases:
@@ -5997,10 +6031,12 @@ class TestNanoControl(unittest.TestCase):
                     with patch("builtins.print") as mock_print:
                         result = nc.drive_elbow_joint(step_multiplier)
 
-                        # Should use absolute value (positive)
+                        # Should use absolute value, then apply not reverse (False -> negative)
                         mock_go.assert_called_once_with(
                             0,
-                            abs(step_multiplier),
+                            -abs(
+                                step_multiplier
+                            ),  # Changed: negative of absolute value
                             0,
                             0,
                             nc.DEFAULT_DRIVE_INTERVAL_MS,
@@ -6023,9 +6059,13 @@ class TestNanoControl(unittest.TestCase):
             with patch("builtins.print") as mock_print:
                 result = nc.drive_elbow_joint(-10, reverse=True)
 
-                # Should use negative absolute value (still negative for reverse)
+                # Should use absolute value, then apply not reverse (True -> positive)
                 mock_go.assert_called_once_with(
-                    0, -10, 0, 0, nc.DEFAULT_DRIVE_INTERVAL_MS
+                    0,
+                    10,
+                    0,
+                    0,
+                    nc.DEFAULT_DRIVE_INTERVAL_MS,  # Changed: positive
                 )
                 self.assertEqual(result, "OK")
 
@@ -6039,10 +6079,10 @@ class TestNanoControl(unittest.TestCase):
         nc = NanoControl.__new__(NanoControl)
 
         test_cases = [
-            (1, False, 1),
-            (5, False, 5),
-            (10, True, -10),
-            (25, True, -25),
+            (1, False, -1),  # Changed: forward now negative due to not reverse
+            (5, False, -5),  # Changed: forward now negative due to not reverse
+            (10, True, 10),  # Changed: reverse now positive due to not reverse
+            (25, True, 25),  # Changed: reverse now positive due to not reverse
         ]
 
         for step_mult, reverse, expected_mult in test_cases:
@@ -6114,17 +6154,25 @@ class TestNanoControl(unittest.TestCase):
             (
                 nc.MIN_STEP_MULTIPLIER,
                 False,
-                100,
-            ),  # -100, forward -> abs(-100) = 100
-            (nc.MAX_STEP_MULTIPLIER, False, 100),  # 100, forward -> 100
+                -100,  # Changed: forward -> negative due to not reverse
+            ),  # -100, forward -> -abs(-100) = -100
+            (
+                nc.MAX_STEP_MULTIPLIER,
+                False,
+                -100,
+            ),  # Changed: 100, forward -> -100
             (
                 nc.MIN_STEP_MULTIPLIER,
                 True,
-                -100,
-            ),  # -100, reverse -> -abs(-100) = -100
-            (nc.MAX_STEP_MULTIPLIER, True, -100),  # 100, reverse -> -100
-            (1, False, 1),  # Minimum positive
-            (1, True, -1),  # Minimum positive, reversed
+                100,  # Changed: reverse -> positive due to not reverse
+            ),  # -100, reverse -> abs(-100) = 100
+            (
+                nc.MAX_STEP_MULTIPLIER,
+                True,
+                100,
+            ),  # Changed: 100, reverse -> 100
+            (1, False, -1),  # Changed: Minimum positive, forward -> negative
+            (1, True, 1),  # Changed: Minimum positive, reversed -> positive
         ]
 
         for step_mult, reverse, expected_mult in boundary_cases:
@@ -6180,8 +6228,10 @@ class TestNanoControl(unittest.TestCase):
             with patch.object(nc, "_go", return_value="OK") as mock_go:
                 nc.drive_elbow_joint(10, 200, True)
 
-                # Should call processing function first
-                mock_process.assert_called_once_with(10, True)
+                # Should call processing function with not reverse applied
+                mock_process.assert_called_once_with(
+                    10, False
+                )  # Changed: not True = False
 
                 # Then call _go with processed result
                 mock_go.assert_called_once_with(0, 5, 0, 0, 200)
@@ -6216,11 +6266,12 @@ class TestNanoControl(unittest.TestCase):
                         )
                         expected_reverse = kwargs.get("reverse", False)
 
-                        # Calculate expected final multiplier
+                        # Calculate expected final multiplier - CHANGED LOGIC
+                        # Due to not reverse: False->negative, True->positive
                         expected_final = (
-                            -abs(expected_step)
+                            abs(expected_step)
                             if expected_reverse
-                            else abs(expected_step)
+                            else -abs(expected_step)
                         )
 
                         mock_go.assert_called_once_with(
@@ -6238,10 +6289,10 @@ class TestNanoControl(unittest.TestCase):
         with patch.object(nc, "_go", return_value="OK") as mock_go:
             nc.drive_elbow_joint()
 
-            # Should use the actual class constants
+            # Should use the actual class constants with not reverse applied
             mock_go.assert_called_once_with(
                 0,
-                nc.DEFAULT_STEP_MULTIPLIER,
+                -nc.DEFAULT_STEP_MULTIPLIER,  # Changed: negative due to not reverse
                 0,
                 0,
                 nc.DEFAULT_DRIVE_INTERVAL_MS,
@@ -6345,11 +6396,11 @@ class TestNanoControl(unittest.TestCase):
         with patch.object(nc, "_go", return_value="OK") as mock_go:
             result = nc.drive_prismatic_joint(reverse=True)
 
-            # Should use negative step multiplier for reverse
+            # Should use negative step multiplier for reverse (normal behavior)
             mock_go.assert_called_once_with(
                 0,
                 0,
-                -nc.DEFAULT_STEP_MULTIPLIER,
+                -nc.DEFAULT_STEP_MULTIPLIER,  # Negative for reverse
                 0,
                 nc.DEFAULT_DRIVE_INTERVAL_MS,
             )
@@ -6362,10 +6413,10 @@ class TestNanoControl(unittest.TestCase):
         nc = NanoControl.__new__(NanoControl)
 
         test_cases = [
-            (5, 200, False, 5),  # Forward direction
-            (10, 150, True, -10),  # Reverse direction
-            (25, 300, False, 25),  # Forward direction
-            (50, 100, True, -50),  # Reverse direction
+            (5, 200, False, 5),  # Forward direction - positive
+            (10, 150, True, -10),  # Reverse direction - negative
+            (25, 300, False, 25),  # Forward direction - positive
+            (50, 100, True, -50),  # Reverse direction - negative
         ]
 
         for step_mult, interval, reverse, expected_mult in test_cases:
@@ -6683,14 +6734,14 @@ class TestNanoControl(unittest.TestCase):
             # Should have made one call for each invocation
             self.assertEqual(mock_go.call_count, len(calls))
 
-    def test_drive_tweezer_joint_default_parameters(self):
+    def test_drive_tweezers_default_parameters(self):
         """
-        Test drive_tweezer_joint with default parameters.
+        Test drive_tweezers with default parameters.
         """
         nc = NanoControl.__new__(NanoControl)
 
         with patch.object(nc, "_go", return_value="OK") as mock_go:
-            result = nc.drive_tweezer_joint()
+            result = nc.drive_tweezers()
 
             # Should use defaults: step_multiplier=1, interval_ms=100, reverse=False
             # Final multiplier should be 1 (positive, forward direction)
@@ -6699,9 +6750,9 @@ class TestNanoControl(unittest.TestCase):
             )
             self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_custom_step_multiplier(self):
+    def test_drive_tweezers_custom_step_multiplier(self):
         """
-        Test drive_tweezer_joint with custom step multiplier.
+        Test drive_tweezers with custom step multiplier.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6710,16 +6761,16 @@ class TestNanoControl(unittest.TestCase):
         for step_multiplier in test_multipliers:
             with self.subTest(step_multiplier=step_multiplier):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
-                    result = nc.drive_tweezer_joint(step_multiplier)
+                    result = nc.drive_tweezers(step_multiplier)
 
                     mock_go.assert_called_once_with(
                         0, 0, 0, step_multiplier, nc.DEFAULT_DRIVE_INTERVAL_MS
                     )
                     self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_custom_interval(self):
+    def test_drive_tweezers_custom_interval(self):
         """
-        Test drive_tweezer_joint with custom interval.
+        Test drive_tweezers with custom interval.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6728,21 +6779,21 @@ class TestNanoControl(unittest.TestCase):
         for interval_ms in test_intervals:
             with self.subTest(interval_ms=interval_ms):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
-                    result = nc.drive_tweezer_joint(interval_ms=interval_ms)
+                    result = nc.drive_tweezers(interval_ms=interval_ms)
 
                     mock_go.assert_called_once_with(
                         0, 0, 0, nc.DEFAULT_STEP_MULTIPLIER, interval_ms
                     )
                     self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_reverse_direction(self):
+    def test_drive_tweezers_reverse_direction(self):
         """
-        Test drive_tweezer_joint with reverse direction.
+        Test drive_tweezers with reverse direction.
         """
         nc = NanoControl.__new__(NanoControl)
 
         with patch.object(nc, "_go", return_value="OK") as mock_go:
-            result = nc.drive_tweezer_joint(reverse=True)
+            result = nc.drive_tweezers(reverse=True)
 
             # Should use negative step multiplier for reverse
             mock_go.assert_called_once_with(
@@ -6754,9 +6805,9 @@ class TestNanoControl(unittest.TestCase):
             )
             self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_all_custom_parameters(self):
+    def test_drive_tweezers_all_custom_parameters(self):
         """
-        Test drive_tweezer_joint with all custom parameters.
+        Test drive_tweezers with all custom parameters.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6772,18 +6823,16 @@ class TestNanoControl(unittest.TestCase):
                 step_mult=step_mult, interval=interval, reverse=reverse
             ):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
-                    result = nc.drive_tweezer_joint(
-                        step_mult, interval, reverse
-                    )
+                    result = nc.drive_tweezers(step_mult, interval, reverse)
 
                     mock_go.assert_called_once_with(
                         0, 0, 0, expected_mult, interval
                     )
                     self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_negative_step_multiplier_warning(self):
+    def test_drive_tweezers_negative_step_multiplier_warning(self):
         """
-        Test drive_tweezer_joint handles negative step multipliers with warning.
+        Test drive_tweezers handles negative step multipliers with warning.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6793,7 +6842,7 @@ class TestNanoControl(unittest.TestCase):
             with self.subTest(step_multiplier=step_multiplier):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
                     with patch("builtins.print") as mock_print:
-                        result = nc.drive_tweezer_joint(step_multiplier)
+                        result = nc.drive_tweezers(step_multiplier)
 
                         # Should use absolute value (positive)
                         mock_go.assert_called_once_with(
@@ -6811,15 +6860,15 @@ class TestNanoControl(unittest.TestCase):
                         self.assertIn("WARNING", warning_msg)
                         self.assertIn("should be positive", warning_msg)
 
-    def test_drive_tweezer_joint_negative_step_multiplier_with_reverse(self):
+    def test_drive_tweezers_negative_step_multiplier_with_reverse(self):
         """
-        Test drive_tweezer_joint with negative step multiplier and reverse=True.
+        Test drive_tweezers with negative step multiplier and reverse=True.
         """
         nc = NanoControl.__new__(NanoControl)
 
         with patch.object(nc, "_go", return_value="OK") as mock_go:
             with patch("builtins.print") as mock_print:
-                result = nc.drive_tweezer_joint(-10, reverse=True)
+                result = nc.drive_tweezers(-10, reverse=True)
 
                 # Should use negative absolute value (still negative for reverse)
                 mock_go.assert_called_once_with(
@@ -6830,9 +6879,9 @@ class TestNanoControl(unittest.TestCase):
                 # Should still print warning about negative input
                 mock_print.assert_called_once()
 
-    def test_drive_tweezer_joint_only_tweezer_joint_moves(self):
+    def test_drive_tweezers_only_tweezer_joint_moves(self):
         """
-        Test that drive_tweezer_joint only affects tweezer joint (channel D).
+        Test that drive_tweezers only affects tweezer joint (channel D).
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6846,16 +6895,16 @@ class TestNanoControl(unittest.TestCase):
         for step_mult, reverse, expected_mult in test_cases:
             with self.subTest(step_mult=step_mult, reverse=reverse):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
-                    nc.drive_tweezer_joint(step_mult, reverse=reverse)
+                    nc.drive_tweezers(step_mult, reverse=reverse)
 
                     # Only fourth parameter (tweezer joint) should be non-zero
                     mock_go.assert_called_once_with(
                         0, 0, 0, expected_mult, nc.DEFAULT_DRIVE_INTERVAL_MS
                     )
 
-    def test_drive_tweezer_joint_propagates_go_errors(self):
+    def test_drive_tweezers_propagates_go_errors(self):
         """
-        Test that drive_tweezer_joint propagates errors from _go method.
+        Test that drive_tweezers propagates errors from _go method.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6864,7 +6913,7 @@ class TestNanoControl(unittest.TestCase):
             mock_go.side_effect = ValueError("Invalid step multiplier")
 
             with self.assertRaises(ValueError) as cm:
-                nc.drive_tweezer_joint(1)
+                nc.drive_tweezers(1)
 
             self.assertIn("Invalid step multiplier", str(cm.exception))
 
@@ -6873,7 +6922,7 @@ class TestNanoControl(unittest.TestCase):
             mock_go.side_effect = NanoControlConnectionError("Connection lost")
 
             with self.assertRaises(NanoControlConnectionError) as cm:
-                nc.drive_tweezer_joint(1)
+                nc.drive_tweezers(1)
 
             self.assertIn("Connection lost", str(cm.exception))
 
@@ -6882,13 +6931,13 @@ class TestNanoControl(unittest.TestCase):
             mock_go.side_effect = NanoControlCommandError("Device busy")
 
             with self.assertRaises(NanoControlCommandError) as cm:
-                nc.drive_tweezer_joint(1)
+                nc.drive_tweezers(1)
 
             self.assertIn("Device busy", str(cm.exception))
 
-    def test_drive_tweezer_joint_return_value_passthrough(self):
+    def test_drive_tweezers_return_value_passthrough(self):
         """
-        Test that drive_tweezer_joint returns the response from _go.
+        Test that drive_tweezers returns the response from _go.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6897,13 +6946,13 @@ class TestNanoControl(unittest.TestCase):
         for response in responses:
             with self.subTest(response=response):
                 with patch.object(nc, "_go", return_value=response):
-                    result = nc.drive_tweezer_joint(1)
+                    result = nc.drive_tweezers(1)
 
                     self.assertEqual(result, response)
 
-    def test_drive_tweezer_joint_boundary_step_multipliers(self):
+    def test_drive_tweezers_boundary_step_multipliers(self):
         """
-        Test drive_tweezer_joint with boundary step multiplier values.
+        Test drive_tweezers with boundary step multiplier values.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6931,9 +6980,7 @@ class TestNanoControl(unittest.TestCase):
                     with patch(
                         "builtins.print"
                     ):  # Suppress warnings for negative inputs
-                        result = nc.drive_tweezer_joint(
-                            step_mult, reverse=reverse
-                        )
+                        result = nc.drive_tweezers(step_mult, reverse=reverse)
 
                         mock_go.assert_called_once_with(
                             0,
@@ -6944,9 +6991,9 @@ class TestNanoControl(unittest.TestCase):
                         )
                         self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_zero_step_multiplier(self):
+    def test_drive_tweezers_zero_step_multiplier(self):
         """
-        Test drive_tweezer_joint with zero step multiplier.
+        Test drive_tweezers with zero step multiplier.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -6954,7 +7001,7 @@ class TestNanoControl(unittest.TestCase):
             with self.subTest(reverse=reverse):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
                     with patch("builtins.print") as mock_print:
-                        result = nc.drive_tweezer_joint(0, reverse=reverse)
+                        result = nc.drive_tweezers(0, reverse=reverse)
 
                         # Zero should remain zero regardless of direction
                         mock_go.assert_called_once_with(
@@ -6965,7 +7012,7 @@ class TestNanoControl(unittest.TestCase):
                         # No warning should be printed for zero
                         mock_print.assert_not_called()
 
-    def test_drive_tweezer_joint_parameter_processing_order(self):
+    def test_drive_tweezers_parameter_processing_order(self):
         """
         Test that parameters are processed in correct order.
         """
@@ -6976,7 +7023,7 @@ class TestNanoControl(unittest.TestCase):
             nc, "_process_step_multiplier_and_direction", return_value=5
         ) as mock_process:
             with patch.object(nc, "_go", return_value="OK") as mock_go:
-                nc.drive_tweezer_joint(10, 200, True)
+                nc.drive_tweezers(10, 200, True)
 
                 # Should call processing function first
                 mock_process.assert_called_once_with(10, True)
@@ -6984,9 +7031,9 @@ class TestNanoControl(unittest.TestCase):
                 # Then call _go with processed result
                 mock_go.assert_called_once_with(0, 0, 0, 5, 200)
 
-    def test_drive_tweezer_joint_keyword_arguments(self):
+    def test_drive_tweezers_keyword_arguments(self):
         """
-        Test drive_tweezer_joint with keyword arguments.
+        Test drive_tweezers with keyword arguments.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -7003,7 +7050,7 @@ class TestNanoControl(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 with patch.object(nc, "_go", return_value="OK") as mock_go:
                     with patch("builtins.print"):  # Suppress any warnings
-                        result = nc.drive_tweezer_joint(**kwargs)
+                        result = nc.drive_tweezers(**kwargs)
 
                         # Extract expected values with defaults
                         expected_step = kwargs.get(
@@ -7026,15 +7073,15 @@ class TestNanoControl(unittest.TestCase):
                         )
                         self.assertEqual(result, "OK")
 
-    def test_drive_tweezer_joint_uses_class_constants(self):
+    def test_drive_tweezers_uses_class_constants(self):
         """
-        Test that drive_tweezer_joint uses class constants for defaults.
+        Test that drive_tweezers uses class constants for defaults.
         """
         nc = NanoControl.__new__(NanoControl)
 
         # Verify that the function uses the current class constants
         with patch.object(nc, "_go", return_value="OK") as mock_go:
-            nc.drive_tweezer_joint()
+            nc.drive_tweezers()
 
             # Should use the actual class constants
             mock_go.assert_called_once_with(
@@ -7045,9 +7092,9 @@ class TestNanoControl(unittest.TestCase):
                 nc.DEFAULT_DRIVE_INTERVAL_MS,
             )
 
-    def test_drive_tweezer_joint_no_side_effects(self):
+    def test_drive_tweezers_no_side_effects(self):
         """
-        Test that drive_tweezer_joint doesn't modify input parameters.
+        Test that drive_tweezers doesn't modify input parameters.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -7060,16 +7107,16 @@ class TestNanoControl(unittest.TestCase):
         reverse = original_reverse
 
         with patch.object(nc, "_go", return_value="OK"):
-            nc.drive_tweezer_joint(step_multiplier, interval_ms, reverse)
+            nc.drive_tweezers(step_multiplier, interval_ms, reverse)
 
         # Verify inputs weren't modified
         self.assertEqual(step_multiplier, original_step)
         self.assertEqual(interval_ms, original_interval)
         self.assertEqual(reverse, original_reverse)
 
-    def test_drive_tweezer_joint_multiple_calls(self):
+    def test_drive_tweezers_multiple_calls(self):
         """
-        Test multiple consecutive calls to drive_tweezer_joint.
+        Test multiple consecutive calls to drive_tweezers.
         """
         nc = NanoControl.__new__(NanoControl)
 
@@ -7077,7 +7124,10 @@ class TestNanoControl(unittest.TestCase):
 
         with patch.object(nc, "_go", return_value="OK") as mock_go:
             for step_mult, reverse in calls:
-                nc.drive_tweezer_joint(step_mult, reverse=reverse)
+                nc.drive_tweezers(step_mult, reverse=reverse)
 
             # Should have made one call for each invocation
             self.assertEqual(mock_go.call_count, len(calls))
+
+
+unittest.main()
