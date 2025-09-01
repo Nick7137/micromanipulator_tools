@@ -121,7 +121,15 @@ class TurntableError(Exception):
             print(f"Turntable operation failed: {e}")
     """
 
-    pass
+    @tested
+    def __init__(self, message: str) -> None:
+        """
+        Super refers to the parent class, in this case, Exception. By
+        calling __init__ on the parent class we are passing the message
+        up to Exception.
+        """
+
+        super().__init__(message)
 
 
 class TurntableConnectionError(TurntableError):
@@ -135,7 +143,9 @@ class TurntableConnectionError(TurntableError):
         - Device is disconnected or not responding
     """
 
-    pass
+    @tested
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 class TurntableCommandError(TurntableError):
@@ -148,7 +158,9 @@ class TurntableCommandError(TurntableError):
         - Arduino response is empty or invalid.
     """
 
-    pass
+    @tested
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 class TurntableTimeoutError(TurntableError):
@@ -160,7 +172,9 @@ class TurntableTimeoutError(TurntableError):
         - Serial communication timeout occurs
     """
 
-    pass
+    @tested
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 class Turntable:

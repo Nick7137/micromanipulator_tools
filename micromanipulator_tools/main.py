@@ -52,7 +52,7 @@ def main():
     try:
         with NanoControl("COM19") as nc:
             with Turntable("COM17") as tt:
-                tt.rotate(60, reverse=False)
+                # tt.rotate(60, reverse=False)
 
                 active_speed_profile = 1
 
@@ -61,12 +61,10 @@ def main():
 
                 # nc.drive_base_joint()
                 # nc.drive_elbow_joint()
-                # nc.drive_prismatic_joint()
                 # nc.drive_tweezers()
 
                 # nc.drive_base_joint(reverse=True)
                 # nc.drive_elbow_joint(reverse=True)
-                # nc.drive_prismatic_joint(reverse=True)
                 # nc.drive_tweezers(reverse=True)
 
                 # for i in range(3):
@@ -75,7 +73,7 @@ def main():
                 #     nc.drive_base_joint(reverse=False)
                 #     time.sleep(5)
 
-                # nc.stop()
+                nc.stop()
 
     except Exception as e:
         print(f"{e}")
@@ -83,17 +81,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# aruco markers
-# https://www.youtube.com/watch?v=bS00Vs09Upw&t=325s
-
-
-# only want to rotate one direction to stop backlash?
-
-# depthanything v2
-
-
-# https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html
-
-# implement big brain algorithm that decides which rock to go for.
