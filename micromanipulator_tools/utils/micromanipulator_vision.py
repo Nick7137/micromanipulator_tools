@@ -3,7 +3,7 @@
 # only want to rotate one direction to stop backlash?
 # depthanything v2
 # TODO do formatting and get rid of inline comments.
-# TODO get rid of magic numbers
+# TODO get rid of magic numbers or magic strings
 # TODO make the docstrings good too.
 # TODO no inline if statements
 # TODO make all error messages show the function they originate from
@@ -14,6 +14,7 @@
 # ==============================================================================
 
 import os
+import glob
 import cv2 as cv
 import numpy as np
 from typing import Optional, Tuple, List
@@ -57,7 +58,7 @@ class MicromanipulatorVisionError(Exception):
     Example:
         try:
             with MicromanipulatorVision(0) as camera:
-                camera.calibrate_camera()
+                camera._calibration_solve_constants()
         except MicromanipulatorVisionError as e:
             print(f"Micromanipulator vision error: {e}")
     """
@@ -152,6 +153,22 @@ class MicromanipulatorVision:
         # TODO
         # if there is no calibration data, calibrate the camera, if cant do that raise error
 
+    def __enter__(self) -> "MicromanipulatorVision":
+        """
+        Enter the runtime context for camera resource management.
+
+        Returns:
+            self: The MicromanipulatorVision instance
+        """
+
+        return self
+
+    def __exit__(self):
+        """
+        TODO
+        """
+        pass
+
     def __str__(self) -> str:
         """
         Return a string representation of the MicromanipulatorVision object.
@@ -159,6 +176,7 @@ class MicromanipulatorVision:
         Returns:
             str: Human-readable description of the object state
         """
+
         calibration_status = (
             "calibrated" if self.is_calibrated else "not calibrated"
         )
@@ -178,46 +196,7 @@ class MicromanipulatorVision:
     # Private Methods----------------------------------------------------------
     # -------------------------------------------------------------------------
 
-    def _ensure_calibrated(self) -> None:
-        """
-        Ensure the camera is calibrated by loading existing data or running calibration
-        on pre-existing calibration images.
-
-        Raises:
-            MicromanipulatorVisionCalibrationError: If calibration cannot be completed
-        """
-        print("Initializing camera calibration...")
-
-        # Try to load existing calibration first
-        if self.load_calibration():
-            print("✓ Using existing calibration data")
-            return
-
-        print(
-            "No existing calibration found - running calibration on existing images..."
-        )
-
-        try:
-            # Load calibration images from disk
-            images = self._load_calibration_images()
-
-            # Find chessboard corners
-            object_points, image_points = self.find_chessboard_corners(images)
-
-            # Perform calibration
-            self.calibrate_camera(object_points, image_points)
-
-            # Save for future use
-            self.save_calibration()
-
-            print("✓ Camera calibration completed successfully")
-
-        except Exception as e:
-            raise MicromanipulatorVisionCalibrationError(
-                f"Failed to calibrate camera: {str(e)}"
-            )
-
-    def _load_calibration_images(
+    def _calibration_load_images(
         self, subfolder: str = "zoom_20%"
     ) -> List[np.ndarray]:
         """
@@ -266,7 +245,7 @@ class MicromanipulatorVision:
 
         return images
 
-    def find_chessboard_corners(
+    def _calibration_find_chessboard_corners(
         self, images: List[np.ndarray]
     ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
         """
@@ -335,7 +314,7 @@ class MicromanipulatorVision:
 
         if len(object_points_list) == 0:
             raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision.find_chessboard_corners: No chessboard"
+                "MicromanipulatorVision._calibration_find_chessboard_corners: No chessboard"
                 " patterns were detected in any images."
             )
 
@@ -344,7 +323,7 @@ class MicromanipulatorVision:
         )
         return object_points_list, image_points_list
 
-    def calibrate_camera(
+    def _calibration_solve_constants(
         self, object_points: List[np.ndarray], image_points: List[np.ndarray]
     ) -> None:
         """
@@ -360,13 +339,13 @@ class MicromanipulatorVision:
 
         if len(object_points) == 0 or len(image_points) == 0:
             raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision.calibrate_camera: Cannot calibrate: "
+                "MicromanipulatorVision._calibration_solve_constants: Cannot calibrate: "
                 "no object points or image points provided."
             )
 
         if len(object_points) != len(image_points):
             raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision.calibrate_camera: Mismatch: "
+                "MicromanipulatorVision._calibration_solve_constants: Mismatch: "
                 f"{len(object_points)} object point sets vs "
                 f"{len(image_points)} image point sets."
             )
@@ -418,7 +397,7 @@ class MicromanipulatorVision:
             print("⚠ Poor calibration quality - consider retaking images")
         print("=" * 50)
 
-    def save_calibration(
+    def _calibration_save_constants(
         self, filename: str = "camera_calibration.npz"
     ) -> None:
         """
@@ -467,7 +446,7 @@ class MicromanipulatorVision:
             f"  - Number of calibration poses: {len(self.r_vecs) if self.r_vecs else 0}"
         )
 
-    def load_calibration(
+    def _calibration_load_constants(
         self, filename: str = "camera_calibration.npz"
     ) -> bool:
         """
@@ -525,6 +504,52 @@ class MicromanipulatorVision:
                 f"Failed to load calibration from {load_path}: {str(e)}"
             )
 
+    # -------------------------------------------------------------------------
+    # Public interface-----------------------------------------------------------
+    # -------------------------------------------------------------------------
+
+    def calibrate_camera(self) -> None:
+        """
+        Ensure the camera is calibrated by loading existing data or running calibration
+        on pre-existing calibration images.
+
+        Raises:
+            MicromanipulatorVisionCalibrationError: If calibration cannot be completed
+        """
+
+        print("Initializing camera calibration...")
+
+        # Try to load existing calibration first
+        if self._calibration_load_constants():
+            print("✓ Using existing calibration data")
+            return
+
+        print(
+            "No existing calibration found - running calibration on existing images..."
+        )
+
+        try:
+            # Load calibration images from disk
+            images = self._calibration_load_images()
+
+            # Find chessboard corners
+            object_points, image_points = (
+                self._calibration_find_chessboard_corners(images)
+            )
+
+            # Perform calibration
+            self._calibration_solve_constants(object_points, image_points)
+
+            # Save for future use
+            self._calibration_save_constants()
+
+            print("✓ Camera calibration completed successfully")
+
+        except Exception as e:
+            raise MicromanipulatorVisionCalibrationError(
+                f"Failed to calibrate camera: {str(e)}"
+            )
+
     def undistort_image(
         self, image: np.ndarray, alpha: float = 1.0
     ) -> np.ndarray:
@@ -577,7 +602,3 @@ class MicromanipulatorVision:
         )
 
         return undistorted_image
-
-    # -------------------------------------------------------------------------
-    # Public interface-----------------------------------------------------------
-    # -------------------------------------------------------------------------
