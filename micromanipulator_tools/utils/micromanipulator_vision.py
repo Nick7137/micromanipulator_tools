@@ -2,6 +2,7 @@
 # TODO make file header comment
 # TODO make the docstrings good.
 # TODO turn into class later.
+# TODO note that the width and height of the camera in opencv may not match the size of the photos taken for the calibration
 
 # =============================================================================
 
@@ -147,6 +148,12 @@ class MicromanipulatorVision:
     NPZ_KEY_TARGET_WIDTH = "target_width"
     NPZ_KEY_TARGET_HEIGHT = "target_height"
 
+    # Live feed constants (add to your existing constants section)
+    LIVE_FEED_WINDOW_NAME = "Micromanipulator Live Feed"
+    LIVE_FEED_SCALE_FACTOR = 0.8
+    LIVE_FEED_WAIT_KEY_MS = 1  # Fast refresh for responsive feed
+    LIVE_FEED_EXIT_KEY = ord("q")
+
     # -------------------------------------------------------------------------
     # Initialisation methods---------------------------------------------------
     # -------------------------------------------------------------------------
@@ -207,6 +214,7 @@ class MicromanipulatorVision:
             self._capture.release()
             self._capture = None
 
+    @tested
     def __str__(self) -> str:
         """
         Return a string representation of the MicromanipulatorVision
@@ -219,7 +227,7 @@ class MicromanipulatorVision:
         return f"MicromanipulatorVision(camera_index={self._camera_index})"
 
     # -------------------------------------------------------------------------
-    # Private calibration methods----------------------------------------------
+    # Private camera calibration methods---------------------------------------
     # -------------------------------------------------------------------------
 
     def _calibration_load_images(
@@ -583,8 +591,30 @@ class MicromanipulatorVision:
             )
 
     # -------------------------------------------------------------------------
-    # Private methods----------------------------------------------------------
+    # Private camera initialisation methods------------------------------------
     # -------------------------------------------------------------------------
+
+    def _initialize_camera(self) -> None:
+        """Initialize camera connection."""
+
+        if self._capture is not None:
+            return  # Already initialized
+
+        self._capture = cv.VideoCapture(self._camera_index)
+
+        if not self._capture.isOpened():
+            self._capture = None
+            raise MicromanipulatorVisionConnectionError(
+                f"Failed to open camera {self._camera_index}"
+            )
+
+        # Set highest resolution
+        self._capture.set(cv.CAP_PROP_FRAME_WIDTH, self.DEFAULT_CAMERA_WIDTH)
+        self._capture.set(cv.CAP_PROP_FRAME_HEIGHT, self.DEFAULT_CAMERA_HEIGHT)
+
+        print(
+            f"Camera {self._camera_index} initialized at {self.DEFAULT_CAMERA_WIDTH}x{self.DEFAULT_CAMERA_HEIGHT}"
+        )
 
     # -------------------------------------------------------------------------
     # Public interface---------------------------------------------------------
@@ -690,7 +720,7 @@ class MicromanipulatorVision:
     def switch_focus_level(self, focus_level: str) -> None:
         """
         Switch to a different focus level and load its calibration.
-
+        # TODO make sure this also changes the focus of the camera
         Args:
             focus_level: The focus level to switch to, either:
                 DEFAULT_FOCUS_LEVEL or SECONDARY_FOCUS_LEVEL
@@ -793,3 +823,4 @@ class MicromanipulatorVision:
 
 with MicromanipulatorVision(calibration_debug=True) as vis:
     vis.dump_calibration_data()
+    print(vis)
