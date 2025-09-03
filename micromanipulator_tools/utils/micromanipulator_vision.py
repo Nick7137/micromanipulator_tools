@@ -7,11 +7,16 @@
 # TODO make the docstrings good too.
 # TODO no inline if statements
 # TODO make all error messages show the function they originate from
-# TODO add in the class constants the default address for calibration images zoom_20%
+# TODO documentation for the type of camera
+# TODO include focus stuff
+# TODO make sure there isn't too many print statements
+# TODO do i need a current_zoom_level
+# TODO go through and decide which variables need to be private.
+# TODO make american spelling british
 
 # implement big brain algorithm that decides which rock to go for.
 
-# ==============================================================================
+# =============================================================================
 
 import os
 import glob
@@ -52,8 +57,9 @@ class MicromanipulatorVisionError(Exception):
     """
     Base exception for all MicromanipulatorVision-related errors.
 
-    This is the parent class for all MicromanipulatorVision-specific exceptions.
-    Catch this to handle any MicromanipulatorVision error generically.
+    This is the parent class for all MicromanipulatorVision-specific
+    exceptions. Catch this to handle any MicromanipulatorVision error
+    generically.
 
     Example:
         try:
@@ -66,7 +72,8 @@ class MicromanipulatorVisionError(Exception):
     @tested
     def __init__(self, message: str) -> None:
         """
-        Initialize the MicromanipulatorVisionError with a descriptive message.
+        Initialize the MicromanipulatorVisionError with a descriptive
+        message.
 
         Args:
             message (str): Error description
@@ -98,17 +105,30 @@ class MicromanipulatorVisionCalibrationError(MicromanipulatorVisionError):
 
 class MicromanipulatorVision:
     """
-    TODO
+    TODO talk about calibration height with tool
     """
 
     # -------------------------------------------------------------------------
     # Class constants----------------------------------------------------------
     # -------------------------------------------------------------------------
 
+    DEFAULT_CAMERA_CHANNEL = 0
+
     # Camera resolution constants
     DEFAULT_CAMERA_WIDTH = 1920
     DEFAULT_CAMERA_HEIGHT = 1080
-    DEFAULT_CHECKERBOARD_SIZE = (9, 6)  # (width, height) in inner corners
+
+    # (width, height) num inner corners
+    DEFAULT_CHECKERBOARD_SIZE = (9, 6)
+
+    DEFAULT_FOCUS_FOLDER = "zoom_20%"
+    SECONDARY_FOCUS_FOLDER = "zoom_30%"
+
+    DEFAULT_FOCUS_FILENAME = "camera_calibration_20%.npz"
+    SECONDARY_FOCUS_FILENAME = "camera_calibration_30%.npz"
+
+    DEFAULT_FOCUS_LEVEL = 20
+    SECONDARY_FOCUS_LEVEL = 30
 
     # -------------------------------------------------------------------------
     # Initialisation methods---------------------------------------------------
@@ -116,22 +136,31 @@ class MicromanipulatorVision:
 
     def __init__(
         self,
-        camera_index: int = 0,
+        camera_index: int = DEFAULT_CAMERA_CHANNEL,
         checkerboard_size: Tuple[int, int] = DEFAULT_CHECKERBOARD_SIZE,
         target_width: int = DEFAULT_CAMERA_WIDTH,
         target_height: int = DEFAULT_CAMERA_HEIGHT,
     ) -> None:
         """
-        Initialize MicromanipulatorVision interface.
+        Initialise MicromanipulatorVision interface.
+
+        The camera must be mounted exactly 90mm above the working surface
+        for proper operation. This method will ensure both calibration
+        files exist (creating them if necessary) and load the default
+        calibration.
 
         Args:
-            camera_index (int): Camera device index (0 for default camera).
-            checkerboard_size (Tuple[int, int]): Size of the chessboard pattern
-                as (width, height) in inner corners.
-            target_width (int): Desired camera resolution width in pixels.
-            target_height (int): Desired camera resolution height in pixels.
-        """
+            camera_index (int): Camera device index, typically 0 for
+                default camera
+            checkerboard_size (Tuple[int, int]): Chessboard pattern size
+                as (width, height) in inner corners
+            target_width (int): Desired camera resolution width in pixels
+            target_height (int): Desired camera resolution height in pixels
 
+        Raises:
+            MicromanipulatorVisionCalibrationError: If calibration cannot
+                be completed for either focus level
+        """
         # Store configuration parameters
         self.camera_index = camera_index
         self.checkerboard = checkerboard_size
@@ -140,19 +169,24 @@ class MicromanipulatorVision:
 
         # Camera state
         self.capture: Optional[cv.VideoCapture] = None
-        self.is_camera_initialized = False
+        self._is_camera_initialised = False
+        self._current_focus_level = self.DEFAULT_FOCUS_LEVEL
 
-        # Calibration state
+        # Calibration state (single set for currently loaded calibration)
         self.camera_matrix: Optional[np.ndarray] = None
         self.dist_coeffs: Optional[np.ndarray] = None
-        self.r_vecs: Optional[List[np.ndarray]] = None
-        self.t_vecs: Optional[List[np.ndarray]] = None
+        self.rotation_vecs: Optional[List[np.ndarray]] = None
+        self.translation_vecs: Optional[List[np.ndarray]] = None
         self.reprojection_error: Optional[float] = None
-        self.is_calibrated = False
+        self._is_calibrated = False
 
-        # TODO
-        # if there is no calibration data, calibrate the camera, if cant do that raise error
+        # Ensure both calibration files exist, create if missing
+        self._ensure_calibration_files_exist()
 
+        # Load default calibration
+        self._load_calibration_data()
+
+    @tested
     def __enter__(self) -> "MicromanipulatorVision":
         """
         Enter the runtime context for camera resource management.
@@ -163,25 +197,34 @@ class MicromanipulatorVision:
 
         return self
 
-    def __exit__(self):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """
-        TODO
+        Exit the runtime context and cleanup camera resources.
+
+        Args:
+            exc_type: Exception type (if any)
+            exc_val: Exception value (if any)
+            exc_tb: Exception traceback (if any)
         """
-        pass
+        if self.capture is not None:
+            self.capture.release()
+            self.capture = None
+        self._is_camera_initialised = False
 
     def __str__(self) -> str:
         """
-        Return a string representation of the MicromanipulatorVision object.
+        Return a string representation of the MicromanipulatorVision
+        object.
 
         Returns:
             str: Human-readable description of the object state
         """
 
         calibration_status = (
-            "calibrated" if self.is_calibrated else "not calibrated"
+            "calibrated" if self._is_calibrated else "not calibrated"
         )
         camera_status = (
-            "connected" if self.is_camera_initialized else "not connected"
+            "connected" if self._is_camera_initialised else "not connected"
         )
 
         return (
@@ -196,9 +239,7 @@ class MicromanipulatorVision:
     # Private Methods----------------------------------------------------------
     # -------------------------------------------------------------------------
 
-    def _calibration_load_images(
-        self, subfolder: str = "zoom_20%"
-    ) -> List[np.ndarray]:
+    def _calibration_load_images(self, subfolder: str) -> List[np.ndarray]:
         """
         Load calibration images from the expected directory structure.
 
@@ -211,7 +252,8 @@ class MicromanipulatorVision:
         Raises:
             MicromanipulatorVisionCalibrationError: If no images found
         """
-        # Find calibration images (reuse your existing logic)
+
+        # Find calibration images
         current_dir = os.path.dirname(__file__)
         root_dir = os.path.dirname(os.path.dirname(current_dir))
         calibration_dir = os.path.join(
@@ -219,9 +261,6 @@ class MicromanipulatorVision:
         )
 
         img_path_list = glob.glob(os.path.join(calibration_dir, "*.jpg"))
-
-        print(f"Looking for images in: {calibration_dir}")
-        print(f"Found {len(img_path_list)} images")
 
         if len(img_path_list) == 0:
             raise MicromanipulatorVisionCalibrationError(
@@ -236,7 +275,7 @@ class MicromanipulatorVision:
             if img is not None:
                 images.append(img)
             else:
-                print(f"Warning: Could not load {img_path}")
+                print(f"WARNING: Could not load {img_path}")
 
         if len(images) == 0:
             raise MicromanipulatorVisionCalibrationError(
@@ -314,12 +353,13 @@ class MicromanipulatorVision:
 
         if len(object_points_list) == 0:
             raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_find_chessboard_corners: No chessboard"
-                " patterns were detected in any images."
+                "MicromanipulatorVision._calibration_find_chessboard_corners: "
+                "No chessboard patterns were detected in any images."
             )
 
         print(
-            f"Successfully processed {len(object_points_list)} out of {len(images)} images"
+            f"Successfully processed {len(object_points_list)} out of "
+            f"{len(images)} images"
         )
         return object_points_list, image_points_list
 
@@ -339,14 +379,14 @@ class MicromanipulatorVision:
 
         if len(object_points) == 0 or len(image_points) == 0:
             raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_solve_constants: Cannot calibrate: "
-                "no object points or image points provided."
+                "MicromanipulatorVision._calibration_solve_constants: Cannot "
+                "calibrate: no object points or image points provided."
             )
 
         if len(object_points) != len(image_points):
             raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_solve_constants: Mismatch: "
-                f"{len(object_points)} object point sets vs "
+                "MicromanipulatorVision._calibration_solve_constants: "
+                f"Mismatch: {len(object_points)} object point sets vs "
                 f"{len(image_points)} image point sets."
             )
 
@@ -358,28 +398,35 @@ class MicromanipulatorVision:
         print(f"Image size: {image_size}")
 
         # Perform OpenCV camera calibration
-        reprojection_error, camera_matrix, dist_coeffs, r_vecs, t_vecs = (
-            cv.calibrateCamera(
-                object_points,
-                image_points,
-                image_size,
-                None,  # Initial camera matrix
-                None,  # Initial distortion coefficients
-            )
+        (
+            reprojection_error,
+            camera_matrix,
+            dist_coeffs,
+            rotation_vecs,
+            translation_vecs,
+        ) = cv.calibrateCamera(
+            object_points,
+            image_points,
+            image_size,
+            None,  # Initial camera matrix
+            None,  # Initial distortion coefficients
         )
 
         # Store calibration results
         self.camera_matrix = camera_matrix
         self.dist_coeffs = dist_coeffs
-        self.r_vecs = r_vecs  # Rotation vectors for each calibration image
-        self.t_vecs = t_vecs  # Translation vectors for each calibration image
+        self.rotation_vecs = (
+            rotation_vecs  # Rotation vectors for each calibration image
+        )
+        self.translation_vecs = (
+            translation_vecs  # Translation vectors for each calibration image
+        )
         self.reprojection_error = reprojection_error
-        self.is_calibrated = True
+        self._is_calibrated = True
 
         # Display results
         print("=" * 50)
         print("CALIBRATION COMPLETE")
-        print("=" * 50)
         print("Camera Matrix:")
         print(camera_matrix)
         print("\nDistortion Coefficients:")
@@ -397,9 +444,7 @@ class MicromanipulatorVision:
             print("⚠ Poor calibration quality - consider retaking images")
         print("=" * 50)
 
-    def _calibration_save_constants(
-        self, filename: str = "camera_calibration.npz"
-    ) -> None:
+    def _calibration_save_constants(self, filename: str) -> None:
         """
         Save the calibration results to a file.
 
@@ -411,14 +456,15 @@ class MicromanipulatorVision:
                 data to save
         """
 
-        if not self.is_calibrated:
+        if not self._is_calibrated:
             raise MicromanipulatorVisionCalibrationError(
                 "No calibration data to save. Run calibration first."
             )
 
         if self.camera_matrix is None or self.dist_coeffs is None:
             raise MicromanipulatorVisionCalibrationError(
-                "Calibration data is incomplete. Camera matrix or distortion coefficients missing."
+                "Calibration data is incomplete. Camera matrix or distortion "
+                "coefficients missing."
             )
 
         # Create save path (same directory as the script)
@@ -430,8 +476,8 @@ class MicromanipulatorVision:
             save_path,
             camera_matrix=self.camera_matrix,
             dist_coeffs=self.dist_coeffs,
-            r_vecs=self.r_vecs,
-            t_vecs=self.t_vecs,
+            rotation_vecs=self.rotation_vecs,
+            translation_vecs=self.translation_vecs,
             reprojection_error=self.reprojection_error,
             checkerboard_size=np.array(self.checkerboard),
             target_width=self.target_width,
@@ -443,133 +489,172 @@ class MicromanipulatorVision:
         print(f"  - Distortion coefficients: {self.dist_coeffs.shape}")
         print(f"  - Reprojection error: {self.reprojection_error:.4f} pixels")
         print(
-            f"  - Number of calibration poses: {len(self.r_vecs) if self.r_vecs else 0}"
+            f"  - Number of calibration poses: {len(self.rotation_vecs) if self.rotation_vecs else 0}"
         )
 
-    def _calibration_load_constants(
-        self, filename: str = "camera_calibration.npz"
-    ) -> bool:
+    def _run_camera_calibration(
+        self, folder: str, filename: str, focus_level: int
+    ) -> None:
         """
-        Load existing calibration data from file.
+        Create a calibration file by running calibration on images.
 
         Args:
-            filename: Name of the calibration file to load
-
-        Returns:
-            bool: True if calibration loaded successfully, False if file
-                not found
+            folder: Folder containing calibration images
+            filename: Filename to save calibration results
+            focus_level: Focus level being calibrated.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If file exists but
-                data is invalid
+            MicromanipulatorVisionCalibrationError: If calibration fails
         """
-
-        current_dir = os.path.dirname(__file__)
-        load_path = os.path.join(current_dir, filename)
-
-        if not os.path.exists(load_path):
-            print(f"No calibration file found at: {load_path}")
-            return False
-
         try:
-            # Load calibration data
-            data = np.load(load_path)
+            # Load images
+            images = self._calibration_load_images(folder)
 
-            # Load core calibration data
-            self.camera_matrix = data["camera_matrix"]
-            self.dist_coeffs = data["dist_coeffs"]
-
-            # Load optional fields with fallbacks
-            self.r_vecs = data["r_vecs"].tolist() if "r_vecs" in data else None
-            self.t_vecs = data["t_vecs"].tolist() if "t_vecs" in data else None
-            self.reprojection_error = (
-                float(data["reprojection_error"])
-                if "reprojection_error" in data
-                else None
-            )
-
-            self.is_calibrated = True
-
-            print(f"✓ Calibration loaded from: {load_path}")
-            print(
-                f"  - Reprojection error: {self.reprojection_error:.4f} pixels"
-                if self.reprojection_error
-                else ""
-            )
-
-            return True
-
-        except Exception as e:
-            raise MicromanipulatorVisionCalibrationError(
-                f"Failed to load calibration from {load_path}: {str(e)}"
-            )
-
-    # -------------------------------------------------------------------------
-    # Public interface-----------------------------------------------------------
-    # -------------------------------------------------------------------------
-
-    def calibrate_camera(self) -> None:
-        """
-        Ensure the camera is calibrated by loading existing data or running calibration
-        on pre-existing calibration images.
-
-        Raises:
-            MicromanipulatorVisionCalibrationError: If calibration cannot be completed
-        """
-
-        print("Initializing camera calibration...")
-
-        # Try to load existing calibration first
-        if self._calibration_load_constants():
-            print("✓ Using existing calibration data")
-            return
-
-        print(
-            "No existing calibration found - running calibration on existing images..."
-        )
-
-        try:
-            # Load calibration images from disk
-            images = self._calibration_load_images()
-
-            # Find chessboard corners
+            # Find corners
             object_points, image_points = (
                 self._calibration_find_chessboard_corners(images)
             )
 
-            # Perform calibration
+            # Run calibration
             self._calibration_solve_constants(object_points, image_points)
 
-            # Save for future use
-            self._calibration_save_constants()
-
-            print("✓ Camera calibration completed successfully")
+            # Save calibration
+            self._calibration_save_constants(filename)
 
         except Exception as e:
             raise MicromanipulatorVisionCalibrationError(
-                f"Failed to calibrate camera: {str(e)}"
+                f"MicromanipulatorVision._run_camera_calibration: "
+                f"Failed to create {focus_level}% calibration: {str(e)}"
             )
 
-    def undistort_image(
+    def _ensure_calibration_files_exist(self) -> None:
+        """
+        Ensure both calibration files exist, creating them if missing.
+
+        Raises:
+            MicromanipulatorVisionCalibrationError: If calibration cannot
+                be completed for either focus level
+        """
+
+        current_dir = os.path.dirname(__file__)
+
+        # Check and create default calibration if missing
+        default_path = os.path.join(current_dir, self.DEFAULT_FOCUS_FILENAME)
+        if not os.path.exists(default_path):
+            self._run_camera_calibration(
+                self.DEFAULT_FOCUS_FOLDER,
+                self.DEFAULT_FOCUS_FILENAME,
+                self.DEFAULT_FOCUS_LEVEL,
+            )
+
+        # Check and create secondary calibration if missing
+        secondary_path = os.path.join(
+            current_dir, self.SECONDARY_FOCUS_FILENAME
+        )
+        if not os.path.exists(secondary_path):
+            self._run_camera_calibration(
+                self.SECONDARY_FOCUS_FOLDER,
+                self.SECONDARY_FOCUS_FILENAME,
+                self.SECONDARY_FOCUS_LEVEL,
+            )
+
+    def _load_calibration_data(self) -> None:
+        """
+        Load calibration for the current focus level.
+
+        Raises:
+            MicromanipulatorVisionCalibrationError: If calibration cannot be loaded
+        """
+        if self._current_focus_level == self.DEFAULT_FOCUS_LEVEL:
+            filename = self.DEFAULT_FOCUS_FILENAME
+        elif self._current_focus_level == self.SECONDARY_FOCUS_LEVEL:
+            filename = self.SECONDARY_FOCUS_FILENAME
+        else:
+            raise MicromanipulatorVisionCalibrationError(
+                f"MicromanipulatorVision._load_current_calibration: "
+                f"Invalid focus level: {self._current_focus_level}"
+            )
+
+        success = self._load_calibration_data(filename)
+        if not success:
+            raise MicromanipulatorVisionCalibrationError(
+                f"MicromanipulatorVision._load_current_calibration: "
+                f"Failed to load {self._current_focus_level}% calibration"
+            )
+
+    # -------------------------------------------------------------------------
+    # Public interface---------------------------------------------------------
+    # -------------------------------------------------------------------------
+
+    def switch_focus_level(self, focus_level: int) -> None:
+        """
+        Switch to a different focus level and load its calibration.
+
+        Args:
+            focus_level: The focus level to switch to (20 or 30)
+
+        Raises:
+            MicromanipulatorVisionCalibrationError: If focus level is invalid
+                or calibration file doesn't exist
+        """
+        # Validate focus level
+        if focus_level not in [
+            self.DEFAULT_FOCUS_LEVEL,
+            self.SECONDARY_FOCUS_LEVEL,
+        ]:
+            raise MicromanipulatorVisionCalibrationError(
+                f"MicromanipulatorVision.switch_focus_level: "
+                f"Invalid focus level {focus_level}. Must be {self.DEFAULT_FOCUS_LEVEL} "
+                f"or {self.SECONDARY_FOCUS_LEVEL}"
+            )
+
+        # Return early if already at this focus level
+        if focus_level == self._current_focus_level:
+            return
+
+        # Check if calibration file exists
+        if focus_level == self.DEFAULT_FOCUS_LEVEL:
+            filename = self.DEFAULT_FOCUS_FILENAME
+        else:
+            filename = self.SECONDARY_FOCUS_FILENAME
+
+        current_dir = os.path.dirname(__file__)
+        file_path = os.path.join(current_dir, filename)
+
+        if not os.path.exists(file_path):
+            raise MicromanipulatorVisionCalibrationError(
+                f"MicromanipulatorVision.switch_focus_level: "
+                f"Calibration file for {focus_level}% focus not found: {file_path}"
+            )
+
+        # Update focus level and load calibration
+        self._current_focus_level = focus_level
+        self._load_calibration_data()
+
+    def undistort_image(  # TODO make dependent on the zoom
         self, image: np.ndarray, alpha: float = 1.0
     ) -> np.ndarray:
         """
-        Apply undistortion to an image using the calibrated camera parameters.
+        Apply undistortion to an image using the calibrated camera
+        parameters.
 
         Args:
             image: Input image to undistort (BGR format)
-            alpha: Free scaling parameter (0.0 = crop to valid pixels, 1.0 = keep all pixels)
+            alpha: Free scaling parameter (0.0 = crop to valid pixels,
+                1.0 = keep all pixels)
 
         Returns:
             np.ndarray: Undistorted image
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If camera is not calibrated
+            MicromanipulatorVisionCalibrationError: If camera is not
+                calibrated
             ValueError: If alpha is not between 0.0 and 1.0
         """
-        if not self.is_calibrated:
+        if not self._is_calibrated:
             raise MicromanipulatorVisionCalibrationError(
-                "Camera not calibrated. Run calibration or load calibration data first."
+                "Camera not calibrated. Run calibration or load "
+                "calibration data first."
             )
 
         if self.camera_matrix is None or self.dist_coeffs is None:
@@ -602,3 +687,7 @@ class MicromanipulatorVision:
         )
 
         return undistorted_image
+
+
+with MicromanipulatorVision() as vis:
+    pass

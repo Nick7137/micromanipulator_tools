@@ -1,3 +1,9 @@
+# TODO implement broad move
+# TODO implement fine adjustments function
+# TODO is robot infocus function and switch the calibration data also
+# TODO
+
+
 import time
 import sys
 import os
@@ -60,7 +66,7 @@ def main():
                 nc.change_speed_profile_to(active_speed_profile)
 
                 # nc.drive_base_joint()
-                # nc.drive_elbow_joint()
+                nc.drive_elbow_joint()
                 # nc.drive_tweezers()
 
                 # nc.drive_base_joint(reverse=True)
