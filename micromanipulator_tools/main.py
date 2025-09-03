@@ -1,8 +1,8 @@
 # TODO implement broad move
 # TODO implement fine adjustments function
 # TODO is robot infocus function and switch the calibration data also
-# TODO
-
+# TODO only want to rotate one direction to stop backlash?
+# TODO implement big brain algorithm that decides which rock to go for.
 
 import time
 import sys
