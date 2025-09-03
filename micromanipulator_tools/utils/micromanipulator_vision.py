@@ -109,8 +109,8 @@ class MicromanipulatorVision:
     DEFAULT_CHESSBOARD_SIZE = (9, 6)
 
     # Camera focus specific settings
-    DEFAULT_FOCUS_FOLDER = "zoom_20%"
-    SECONDARY_FOCUS_FOLDER = "zoom_30%"
+    DEFAULT_FOCUS_FOLDER = "focus_20%"
+    SECONDARY_FOCUS_FOLDER = "focus_30%"
     DEFAULT_FOCUS_FILENAME = "camera_calibration_20%.npz"
     SECONDARY_FOCUS_FILENAME = "camera_calibration_30%.npz"
     DEFAULT_FOCUS_LEVEL = 20
@@ -133,6 +133,10 @@ class MicromanipulatorVision:
     ALPHA_MIN_VALUE = 0.0
     ALPHA_MAX_VALUE = 1.0
 
+    # Visual calibration constants
+    CALIBRATION_DISPLAY_TIME_MS = 300
+    CALIBRATION_WINDOW_NAME = "Chessboard"
+
     # Calibration constant keys
     NPZ_KEY_CAMERA_MATRIX = "camera_matrix"
     NPZ_KEY_DIST_COEFFS = "dist_coeffs"
@@ -150,9 +154,7 @@ class MicromanipulatorVision:
     def __init__(
         self,
         camera_index: int = DEFAULT_CAMERA_CHANNEL,
-        chessboard_size: Tuple[int, int] = DEFAULT_CHESSBOARD_SIZE,
-        target_width: int = DEFAULT_CAMERA_WIDTH,
-        target_height: int = DEFAULT_CAMERA_HEIGHT,
+        calibration_debug: bool = False,
     ) -> None:
         """
         TODO
@@ -160,9 +162,10 @@ class MicromanipulatorVision:
 
         # Store configuration parameters
         self._camera_index = camera_index
-        self._chessboard = chessboard_size
-        self._target_width = target_width
-        self._target_height = target_height
+        self._calibration_debug = calibration_debug
+        self._chessboard = self.DEFAULT_CHESSBOARD_SIZE
+        self._target_width = self.DEFAULT_CAMERA_WIDTH
+        self._target_height = self.DEFAULT_CAMERA_HEIGHT
 
         # Camera state
         self._capture: Optional[cv.VideoCapture] = None
@@ -252,6 +255,10 @@ class MicromanipulatorVision:
                 f"Please add .jpg calibration images to this directory."
             )
 
+        if self._calibration_debug:
+            print(f"Looking for calibration images in: {calibration_dir}")
+            print(f"Found {len(image_path_list)} images.")
+
         # Load all images
         images = []
         for image_path in image_path_list:
@@ -264,7 +271,7 @@ class MicromanipulatorVision:
         if len(images) == 0:
             raise MicromanipulatorVisionCalibrationError(
                 "MicromanipulatorVision._calibration_load_images: "
-                "No valid calibration images could be loaded"
+                "No valid calibration images could be loaded."
             )
 
         return images
@@ -309,6 +316,9 @@ class MicromanipulatorVision:
         )
 
         for i, image_bgr in enumerate(images):
+            if self._calibration_debug:
+                print(f"Processing: image {i + 1}")
+
             image_gray = cv.cvtColor(image_bgr, cv.COLOR_BGR2GRAY)
 
             # Set image size from first successful image
@@ -322,6 +332,11 @@ class MicromanipulatorVision:
                 image_gray, self._chessboard, None
             )
             if corners_found:
+                if self._calibration_debug:
+                    print("✓ Found chessboard corners")
+
+                object_points_list.append(world_points_template.copy())
+
                 # Refine corner positions to subpixel accuracy
                 corners_refined = cv.cornerSubPix(
                     image_gray,
@@ -330,11 +345,23 @@ class MicromanipulatorVision:
                     self.CORNER_REFINEMENT_ZERO_ZONE,
                     term_criteria,
                 )
-                object_points_list.append(world_points_template.copy())
                 image_points_list.append(corners_refined)
 
+                # Show visual feedback if debug mode is enabled
+                if self._calibration_debug:
+                    cv.drawChessboardCorners(
+                        image_bgr,
+                        self._chessboard,
+                        corners_refined,
+                        corners_found,
+                    )
+                    cv.imshow(self.CALIBRATION_WINDOW_NAME, image_bgr)
+                    cv.waitKey(self.CALIBRATION_DISPLAY_TIME_MS)
+
             else:
-                print(f"WARNING: No chessboard corners found in image {i + 1}")
+                print(f"✗ No chessboard corners found in image {i + 1}")
+
+        cv.destroyAllWindows()
 
         if len(object_points_list) == 0:
             raise MicromanipulatorVisionCalibrationError(
