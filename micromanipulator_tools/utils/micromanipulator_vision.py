@@ -213,6 +213,8 @@ class MicromanipulatorVision:
             self._camera.release()
             self._camera = None
 
+        print(f"Camera {self._camera_index} closed")
+
     @tested
     def __str__(self) -> str:
         """
@@ -586,7 +588,7 @@ class MicromanipulatorVision:
         if self._camera is not None:
             return
 
-        self._camera = cv.VideoCapture(self._camera_index, cv.CAP_DSHOW)
+        self._camera = cv.VideoCapture(self._camera_index + cv.CAP_DSHOW)
 
         if not self._camera.isOpened():
             self._camera = None
@@ -597,15 +599,11 @@ class MicromanipulatorVision:
         # Set highest resolution
         self._camera.set(cv.CAP_PROP_FRAME_WIDTH, self.DEFAULT_CAMERA_WIDTH)
         self._camera.set(cv.CAP_PROP_FRAME_HEIGHT, self.DEFAULT_CAMERA_HEIGHT)
-        self._camera.set(cv.CAP_PROP_SETTINGS, 1)
 
-        print(
-            f"Camera {self._camera_index} initialized at "
-            f"{self.DEFAULT_CAMERA_WIDTH}x{self.DEFAULT_CAMERA_HEIGHT}"
-        )
+        print(f"Camera {self._camera_index} initialised")
 
     # -------------------------------------------------------------------------
-    # Public interface---------------------------------------------------------
+    # Public interface: calibration and settings-------------------------------
     # -------------------------------------------------------------------------
 
     @tested
@@ -669,7 +667,23 @@ class MicromanipulatorVision:
     @tested
     def set_camera_settings(self):
         """
-        TODO - for logi c930e see camera_settings in resources folder
+        Open camera settings dialog and display live video feed.
+
+        This method initialises the camera, opens the built-in camera
+        settings dialog, and displays a live video feed of the
+        undistorted camera output. It allows the user to adjust camera
+        settings visually and see the results in real-time.
+
+        The method runs until the user presses 'q' to quit.
+
+        For the settings used with the logi c390e camera see
+        "resources/camera_settings"
+
+        Raises:
+            MicromanipulatorVisionConnectionError: If camera
+                initialisation fails or connection is lost.
+            MicromanipulatorVisionCalibrationError: If undistortion
+                fails due to missing calibration data.
         """
 
         print(
@@ -691,6 +705,10 @@ class MicromanipulatorVision:
                 break
 
         cv.destroyAllWindows()
+
+    # -------------------------------------------------------------------------
+    # Public interface: basic frame manipulation-------------------------------
+    # -------------------------------------------------------------------------
 
     @tested
     def capture_frame(self) -> np.ndarray:
@@ -733,11 +751,88 @@ class MicromanipulatorVision:
         return frame
 
     @tested
+    def scale_frame(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Resize an input frame based on the instance's scale factor.
+
+        Scales the input frame using the frame_scale_factor set during
+        object initialisation (or uses DEFAULT_FRAME_SCALE_FACTOR).
+        This is useful for resizing frames for display or processing
+        while maintaining aspect ratio.
+
+        Args:
+            frame (np.ndarray): Input frame to be resized.
+
+        Returns:
+            np.ndarray: Resized frame.
+
+        Note:
+            The scaling uses cv.resize with default interpolation
+            (LINEAR). frame_scale_factor > 1 enlarges the image,
+            < 1 shrinks it.
+        """
+
+        width = int(frame.shape[1] * self._frame_scale_factor)
+        height = int(frame.shape[0] * self._frame_scale_factor)
+        resized_frame = cv.resize(frame, (width, height))
+
+        return resized_frame
+
+    # TODO make pretty
+    def rotate_frame(self, image, angle_deg, rotation_point=None):
+        """
+        TODO
+        # +ve => clockwise
+        # -ve => anticlockwise
+        """
+
+        (height, width) = image.shape[:2]
+
+        if rotation_point is None:
+            rotation_point = (width // 2, height // 2)
+
+        rotation_matrix = cv.getRotationMatrix2D(
+            rotation_point, angle_deg, 1.0
+        )
+
+        return cv.warpAffine(image, rotation_matrix, (width, height))
+
+    # TODO make the angle an internal parameter. maybe this should be in init.
+    def correct_frame_orientation(self, image):
+        """
+        TODO
+        """
+
+        angle_deg = self.detect_orientation_angle_error(image)
+        return self.rotate_frame(image, angle_deg)
+
+    @tested
     def undistort_frame(
         self, image: np.ndarray, alpha: float = DEFAULT_ALPHA
     ) -> np.ndarray:
         """
-        TODO
+        Undistort an input image using the camera's calibration data.
+
+        Applies lens distortion correction to the input image based on
+        previously calculated camera matrix and distortion coefficients.
+
+        Args:
+            image (np.ndarray): Input image to undistort.
+            alpha (float, optional): Free scaling parameter. If 0,
+                undistorted image is zoomed and cropped. If 1, all
+                pixels are retained. Defaults to DEFAULT_ALPHA.
+
+        Returns:
+            np.ndarray: Undistorted image.
+
+        Raises:
+            MicromanipulatorVisionCalibrationError: If calibration data
+                is missing.
+            ValueError: If alpha is not between 0.0 and 1.0.
+
+        Note:
+            Undistortion may crop the image edges depending on the
+                alpha value.
         """
 
         if self._camera_matrix is None or self._dist_coeffs is None:
@@ -775,17 +870,121 @@ class MicromanipulatorVision:
 
         return undistorted_image
 
-    @tested
-    def scale_frame(self, frame: np.ndarray) -> np.ndarray:
+    # -------------------------------------------------------------------------
+    # Public interface: detection functions------------------------------------
+    # -------------------------------------------------------------------------
+
+    # TODO magic numbers
+    def detect_disk(
+        self, image: np.ndarray, visualize: bool = False
+    ) -> Tuple[Tuple[int, int], int]:
+        """
+        Detect a white disk in the image, even if partially obscured,
+        and optionally visualise the result.
+
+        Args:
+            image (np.ndarray): Input image (BGR format) containing the white disk.
+            visualise (bool, optional): If True, display the image with
+                detected disk. Defaults to False.
+
+        Returns:
+            Tuple[Tuple[int, int], int]: ((center_x, center_y), radius)
+                center_x, center_y: Coordinates of the disk's center in pixels.
+                radius: Radius of the detected disk in pixels.
+
+        Raises:
+            ValueError: If no disk is detected in the image.
+
+        Note:
+            This method can detect the disk even if parts of it are covered.
+            Adjust parameters if detection is not accurate for your setup.
+        """
+        # Convert to grayscale
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+
+        # Apply Gaussian blur to reduce noise
+        blurred = cv.GaussianBlur(gray, (15, 15), 1)
+
+        # Use Hough Circle Transform to detect the disk.
+        circles = cv.HoughCircles(
+            blurred,
+            cv.HOUGH_GRADIENT,
+            dp=1,
+            minDist=50,
+            param1=100,
+            param2=100,
+            minRadius=int(400 * self._frame_scale_factor),
+            maxRadius=int(500 * self._frame_scale_factor),
+        )
+
+        if circles is not None:
+            # Convert the (x, y) coordinates and radius of the circles to integers
+            circles = np.round(circles[0, :]).astype("int")
+
+            # Find the largest circle (assuming it's our disk)
+            largest_circle = max(circles, key=lambda c: c[2])
+            center = (largest_circle[0], largest_circle[1])
+            radius = largest_circle[2]
+
+            if visualize:
+                # Draw the result on the image
+                cv.circle(image, center, radius, (0, 255, 0), 2)
+                cv.circle(image, center, 2, (0, 0, 255), 3)
+                cv.imshow("Detected Disk", image)
+                cv.waitKey(0)
+                cv.destroyAllWindows()
+
+            return (center, radius)
+        else:
+            raise ValueError("No disk detected in the image")
+
+    # TODO magic numbers
+    # TODO add error handling if angle makes no sense or strip not found
+    # TODO on startup add code which gets the user to confirm the orientation before starting.
+    # TODO check the maths is correct and works.
+    # TODO get grey and edges and final image for the presentation
+    def detect_orientation_angle_error(self, image, visualize=False):
         """
         TODO
         """
 
-        width = int(frame.shape[1] * self._frame_scale_factor)
-        height = int(frame.shape[0] * self._frame_scale_factor)
-        resized_frame = cv.resize(frame, (width, height))
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        edges = cv.Canny(gray, 50, 150)
+        lines = cv.HoughLines(edges, 1, np.pi / 10000, threshold=30)
 
-        return resized_frame
+        if lines is None:
+            return None
+
+        # Use the strongest line.
+        rho, theta = lines[0][0]
+
+        # Subtract 90 degrees to get the angle of the actual line
+        angle_deg = np.degrees(theta - np.pi / 2)
+
+        # Normalize to [-90, 90]
+        if angle_deg > 90:
+            angle_deg -= 180
+        elif angle_deg < -90:
+            angle_deg += 180
+
+        if visualize:
+            # Calculate line endpoints for visualization
+            a = np.cos(theta)
+            b = np.sin(theta)
+            x0 = a * rho
+            y0 = b * rho
+            x1 = int(x0 + 1000 * (-b))
+            y1 = int(y0 + 1000 * (a))
+            x2 = int(x0 - 1000 * (-b))
+            y2 = int(y0 - 1000 * (a))
+
+            cv.line(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+            cv.imshow("Detected Line", image)
+            cv.waitKey(0)
+            cv.destroyAllWindows()
+
+        return angle_deg
 
 
 # ==============================================================================
@@ -796,5 +995,31 @@ class MicromanipulatorVision:
 with MicromanipulatorVision(
     frame_scale_factor=0.6, calibration_debug=False
 ) as vis:
-    vis.dump_calibration_data()
-    vis.set_camera_settings()
+    # while True:
+    #     frame = vis.capture_frame()
+    #     # undistorted = vis.undistort_frame(frame)
+    #     resized_frame = vis.scale_frame(frame)
+
+    #     cv.imshow("Undistorted Video Feed", resized_frame)
+
+    #     # Wait 20ms for keypress; use bitwise mask (0xFF) to extract
+    #     # only ASCII bits, exit if 'q' pressed.
+    #     if cv.waitKey(1) & 0xFF == ord("q"):
+    #         break
+
+    # cv.destroyAllWindows()
+
+    # frame = vis.capture_frame()
+    # undistorted = vis.undistort_frame(frame)
+    # resized_frame = vis.scale_frame(undistorted)
+    # center, radius = vis.detect_disk(resized_frame, True)
+
+    frame = vis.capture_frame()
+    resized_frame = vis.scale_frame(frame)
+    # center, radius = vis.detect_disk(resized_frame, True)
+    corrected_orientation = vis.correct_frame_orientation(resized_frame)
+
+    cv.imshow("correct", corrected_orientation)
+    cv.waitKey(0)
+
+    # print(radius)
