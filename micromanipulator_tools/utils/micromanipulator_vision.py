@@ -388,7 +388,8 @@ class MicromanipulatorVision:
 
         print(
             f"Successfully processed {len(object_points_list)} out of "
-            f"{len(images)} images. Now doing very clever maths......."
+            f"{len(images)} images for calibration. Now doing very "
+            "clever maths......."
         )
         return object_points_list, image_points_list, actual_image_size
 
@@ -568,6 +569,7 @@ class MicromanipulatorVision:
     # Private vision methods---------------------------------------------------
     # -------------------------------------------------------------------------
 
+    @tested
     def _initialise_camera(self) -> None:
         """
         Initialise camera connection and set the image dimensions.
@@ -792,4 +794,5 @@ class MicromanipulatorVision:
 # ==============================================================================
 
 with MicromanipulatorVision(calibration_debug=False) as vis:
+    vis.dump_calibration_data()
     vis.set_camera_settings()
