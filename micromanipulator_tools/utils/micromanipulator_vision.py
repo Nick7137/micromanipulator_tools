@@ -139,7 +139,7 @@ class MicromanipulatorVision:
 
     # Configure the free scaling parameter that controls how much of the
     # original image is kept after undistortion.
-    DEFAULT_ALPHA = 1.0
+    DEFAULT_ALPHA = 0
     ALPHA_MIN_VALUE = 0.0
     ALPHA_MAX_VALUE = 1.0
 
@@ -667,6 +667,32 @@ class MicromanipulatorVision:
             print(f"{'=' * 50}\n")
 
     @tested
+    def set_camera_settings(self):
+        """
+        TODO - for logi c930e see camera_settings in resources folder
+        """
+
+        print(
+            "Entered settings configuration mode. Press 'q' to exit when done."
+        )
+        self._initialise_camera()
+        self._camera.set(cv.CAP_PROP_SETTINGS, 1)
+
+        while True:
+            frame = self.capture_frame()
+            undistorted = self.undistort_frame(frame)
+            resized_frame = self.scale_frame(undistorted)
+
+            cv.imshow("Undistorted Video Feed", resized_frame)
+
+            # Wait 20ms for keypress; use bitwise mask (0xFF) to extract
+            # only ASCII bits, exit if 'q' pressed.
+            if cv.waitKey(20) & 0xFF == ord("q"):
+                break
+
+        cv.destroyAllWindows()
+
+    @tested
     def capture_frame(self) -> np.ndarray:
         """
         Capture a single frame from the camera. The camera must be
@@ -761,38 +787,14 @@ class MicromanipulatorVision:
 
         return resized_frame
 
-    @tested
-    def set_camera_settings(self):
-        """
-        TODO - include settings used during my project
-        """
-
-        print(
-            "Entered settings configuration mode. Press 'q' to exit when done."
-        )
-        self._initialise_camera()
-        self._camera.set(cv.CAP_PROP_SETTINGS, 1)
-
-        while True:
-            frame = self.capture_frame()
-            undistorted = self.undistort_frame(frame)
-            resized_frame = self.scale_frame(undistorted)
-
-            cv.imshow("Undistorted Video Feed", resized_frame)
-
-            # Wait 20ms for keypress; use bitwise mask (0xFF) to extract
-            # only ASCII bits, exit if 'q' pressed.
-            if cv.waitKey(20) & 0xFF == ord("q"):
-                break
-
-        cv.destroyAllWindows()
-
 
 # ==============================================================================
 # ==============================================================================
 # ==============================================================================
 # ==============================================================================
 
-with MicromanipulatorVision(calibration_debug=False) as vis:
+with MicromanipulatorVision(
+    frame_scale_factor=0.6, calibration_debug=False
+) as vis:
     vis.dump_calibration_data()
     vis.set_camera_settings()
