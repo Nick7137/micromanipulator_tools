@@ -7,7 +7,6 @@
 # TODO make all spelling american, center, visualize etc.
 # TODO go through all the code and check if any of it is unused or completely irrelevent
 # TODO break class up into smaller classes if possible
-# TODO add inputs and outputs to each function
 
 # =============================================================================
 
@@ -137,9 +136,6 @@ class MicromanipulatorVision:
     NPZ_KEY_ROTATION_VECS = "rotation_vecs"
     NPZ_KEY_TRANSLATION_VECS = "translation_vecs"
     NPZ_KEY_REPROJECTION_ERROR = "reprojection_error"
-    NPZ_KEY_CHESSBOARD_SIZE = "chessboard_size"
-    NPZ_KEY_TARGET_WIDTH = "target_width"
-    NPZ_KEY_TARGET_HEIGHT = "target_height"
 
     # Configure the free scaling parameter that controls how much of the
     # original frame is kept after undistortion.
@@ -154,8 +150,7 @@ class MicromanipulatorVision:
     ROBOT_HEAD_APPROX_EPSILON = 0.02
 
     # Rock detection constants
-    ROCK_GRAY_LOWER_THRESHOLD = 30
-    ROCK_GRAY_UPPER_THRESHOLD = 120
+    ROCK_GRAY_UPPER_THRESHOLD = 60
     ROCK_MIN_AREA_PIXELS = 50
     ROCK_MAX_AREA_PIXELS = 5000
     ROCK_BLUR_KERNEL = (3, 3)
@@ -654,7 +649,9 @@ class MicromanipulatorVision:
 
     # TODO understand the maths here - rename vars
     @tested
-    def _visualize_orientation(self, frame, theta, r):
+    def _visualize_orientation(
+        self, frame: np.ndarray, theta: float, rho: float
+    ) -> np.ndarray:
         """
         Draw detected orientation line on frame for debugging.
 
@@ -674,8 +671,8 @@ class MicromanipulatorVision:
         y_comp = np.sin(theta)
 
         # Get the point on the line closest to the origin
-        x0 = x_comp * r
-        y0 = y_comp * r
+        x0 = x_comp * rho
+        y0 = y_comp * rho
 
         # Large number to span entire window.
         span = 1000
@@ -690,7 +687,9 @@ class MicromanipulatorVision:
         return visualization_frame
 
     @tested
-    def _visualize_disk(self, frame, center, radius):
+    def _visualize_disk(
+        self, frame: np.ndarray, center: Tuple[int, int], radius: int
+    ) -> np.ndarray:
         """
         Draw detected disk visualization on frame for debugging.
 
@@ -722,7 +721,12 @@ class MicromanipulatorVision:
         return visualization_frame
 
     @tested
-    def _visualize_robot_head(self, frame, centroid, largest_contour):
+    def _visualize_robot_head(
+        self,
+        frame: np.ndarray,
+        centroid: Tuple[int, int],
+        largest_contour: np.ndarray,
+    ) -> np.ndarray:
         """
         Draw detected robot head visualization on frame for debugging.
 
@@ -758,7 +762,11 @@ class MicromanipulatorVision:
         return visualization_frame
 
     @tested
-    def _visualize_rocks(self, frame, detected_rocks):
+    def _visualize_rocks(
+        self,
+        frame: np.ndarray,
+        detected_rocks: List[Tuple[np.ndarray, Tuple[int, int], float]],
+    ) -> np.ndarray:
         """
         Draw detected rocks visualization on frame for debugging.
 
@@ -801,7 +809,7 @@ class MicromanipulatorVision:
         return visualization_frame
 
     @tested
-    def _display(self, name: str, frame):
+    def _display(self, name: str, frame: np.ndarray) -> None:
         """
         Display frame in a window and wait for user keypress. Blocks
         until user presses any key, then closes the window.
@@ -879,7 +887,7 @@ class MicromanipulatorVision:
             print(f"{'=' * 50}\n")
 
     @tested
-    def set_camera_settings(self):
+    def set_camera_settings(self) -> None:
         """
         Open camera settings dialog and display live video feed.
 
@@ -1032,7 +1040,9 @@ class MicromanipulatorVision:
         return cv.warpAffine(frame, rotation_matrix, (width, height))
 
     @tested
-    def correct_frame_orientation(self, frame, visualize=False):
+    def correct_frame_orientation(
+        self, frame: np.ndarray, visualize: bool = False
+    ) -> np.ndarray:
         """
         Correct frame orientation using detected or stored angle error.
 
@@ -1142,15 +1152,33 @@ class MicromanipulatorVision:
     # Public interface: detection functions------------------------------------
     # -------------------------------------------------------------------------
 
-    # TODO magic numbers
-    # TODO add error handling if angle makes no sense or strip not found
-    # TODO on startup add code which gets the user to confirm the orientation before starting.
-    # TODO check the maths is correct and works.
-    # TODO get grey and edges and final frame for the presentation
-    # TODO what is rho?
-    def detect_orientation_angle_error(self, frame, visualize=False):
+    @tested
+    def detect_orientation_angle_error(
+        self, frame: np.ndarray, visualize: bool = False
+    ) -> float:
         """
-        TODO
+        Detect orientation angle error from microscope bed edge.
+
+        Uses Hough line detection to find the strongest edge line in the
+        frame and calculates the rotation angle needed to correct frame
+        orientation.
+
+        Args:
+            frame (np.ndarray): Input frame to analyze for orientation.
+            visualize (bool, optional): If True, display detected line.
+                Defaults to False.
+
+        Returns:
+            float: Angle correction in degrees. Positive values indicate
+                clockwise rotation needed.
+
+        Raises:
+            MicromanipulatorVisionError: If no lines detected for
+                orientation calculation.
+
+        Note:
+            Caches result in _orientation_result for visualization.
+            Angle is normalized to [-90, 90] degree range.
         """
 
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
@@ -1185,31 +1213,35 @@ class MicromanipulatorVision:
         self._orientation_result = (theta, rho)
         return angle_deg
 
-    # TODO magic numbers
+    # TODO understand how it works
+    @tested
     def detect_disk(
         self, frame: np.ndarray, visualize: bool = False
     ) -> Tuple[Tuple[int, int], int]:
         """
-        Detect a white disk in the frame, even if partially obscured,
-        and optionally visualise the result.
+        Detect white disk in frame using Hough circle transform.
+
+        Uses Gaussian blur and Hough circle detection to find the
+        largest circular object, typically the microscope sample disk.
+        Can detect partially obscured disks.
 
         Args:
-            frame (np.ndarray): Input frame (BGR format) containing the white disk.
-            visualise (bool, optional): If True, display the frame with
-                detected disk. Defaults to False.
+            frame (np.ndarray): Input frame (BGR format) to analyze.
+            visualize (bool, optional): If True, display detected disk.
+                Defaults to False.
 
         Returns:
             Tuple[Tuple[int, int], int]: ((center_x, center_y), radius)
-                center_x, center_y: Coordinates of the disk's center in pixels.
-                radius: Radius of the detected disk in pixels.
+                where coordinates and radius are in pixels.
 
         Raises:
-            ValueError: If no disk is detected in the frame.
+            ValueError: If no disk detected in the frame.
 
         Note:
-            This method can detect the disk even if parts of it are covered.
-            Adjust parameters if detection is not accurate for your setup.
+            Caches result in _disk_result. Detection parameters scaled
+            by frame_scale_factor for different resolutions.
         """
+
         # Convert to grayscale
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
 
@@ -1248,12 +1280,33 @@ class MicromanipulatorVision:
         else:
             raise ValueError("No disk detected in the frame")
 
-    # TODO magic numbers, docstring, check how it works.
+    # TODO understand how it works
+    @tested
     def detect_robot_head(
         self, frame: np.ndarray, visualize: bool = False
     ) -> Tuple[int, int]:
         """
-        TODO
+        Detect green robot head quadrilateral and return its centroid.
+
+        Uses HSV color masking to isolate green objects, applies
+        morphological operations for noise reduction, then finds
+        quadrilateral contours and selects the largest valid one.
+
+        Args:
+            frame (np.ndarray): Input frame (BGR format) to analyze.
+            visualize (bool, optional): If True, display detected head
+                with green outline and red centroid. Defaults to False.
+
+        Returns:
+            Tuple[int, int]: (centroid_x, centroid_y) coordinates of the
+                robot head center in pixels.
+
+        Raises:
+            ValueError: If no green objects or quadrilaterals detected.
+
+        Note:
+            Caches result in _robot_head_result. Uses HSV thresholds
+            defined in class constants for green color detection.
         """
 
         # Convert BGR to HSV for better color detection
@@ -1322,113 +1375,126 @@ class MicromanipulatorVision:
         self._robot_head_result = (centroid, largest_contour)
         return (centroid_x, centroid_y)
 
-    def detect_end_effector_tip():
-        pass
-
-    # TODO make this just call detect_disk
+    # TODO test the square size of the rocks
     def detect_rocks(
         self,
         frame: np.ndarray,
-        disk_center: Tuple[int, int],
-        disk_radius: int,
         visualize: bool = False,
     ) -> List[Tuple[np.ndarray, Tuple[int, int], float]]:
         """
-        Detect all greyish-black rocks within the white disk boundaries.
+        Detect dark rock objects within the microscope sample disk.
+
+        Uses grayscale thresholding and contour detection to identify
+        dark objects within the disk boundary. Applies morphological
+        operations and area filtering to reduce noise.
 
         Args:
-            frame (np.ndarray): Input frame (BGR format).
-            disk_center (Tuple[int, int]): Center coordinates of the white disk.
-            disk_radius (int): Radius of the white disk in pixels.
-            visualize (bool, optional): If True, display detection results. Defaults to False.
+            frame (np.ndarray): Input BGR frame to analyze.
+            visualize (bool, optional): If True, display detected rocks
+                with cyan rectangles and red centers. Defaults to False.
 
         Returns:
-            List[Tuple[np.ndarray, Tuple[int, int], float]]: List of detected rocks.
-                Each tuple contains:
-                - np.ndarray: Minimum area rectangle data ((center), (width, height), angle)
-                - Tuple[int, int]: (centroid_x, centroid_y) of the rock
-                - float: Area of the rock in pixels
+            List[Tuple[np.ndarray, Tuple[int, int], float]]: List of
+                detected rocks. Each tuple contains (min_rect, centroid,
+                area).
 
-        Raises:
-            ValueError: If no rocks are detected within the disk boundaries.
+        Note:
+            Automatically calls detect_disk if needed. Returns empty
+            list if no rocks detected. Caches results in _rocks_result.
         """
 
-        # Convert to grayscale for rock detection
-        gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+        # Get disk info from cache or detect it
+        if self._disk_result is None:
+            self.detect_disk(frame, visualize=False)
+        disk_center, disk_radius = self._disk_result
 
         # Create circular mask for the disk area
-        mask_disk = np.zeros(gray.shape[:2], dtype=np.uint8)
+        mask_disk = np.zeros(frame.shape[:2], dtype=np.uint8)
         cv.circle(mask_disk, disk_center, disk_radius, 255, -1)
 
-        # Apply Gaussian blur to reduce noise
-        blurred = cv.GaussianBlur(gray, self.ROCK_BLUR_KERNEL, 0)
+        # Convert to grayscale and mask so we look at only the disk then
+        # blur to eliminate noise
+        gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+        gray_masked = cv.bitwise_and(gray, mask_disk)
+        blurred = cv.GaussianBlur(gray_masked, self.ROCK_BLUR_KERNEL, 0)
 
-        # Create binary mask for rock colors (dark grays/blacks)
+        # Create binary mask for rock colors (dark grays/blacks). We
+        # invert the threshold to make the rocks (objects of interest)
+        # white - this is convention.
         _, rock_mask = cv.threshold(
             blurred, self.ROCK_GRAY_UPPER_THRESHOLD, 255, cv.THRESH_BINARY_INV
         )
-
-        # Combine with disk mask (only look inside the disk)
-        combined_mask = cv.bitwise_and(rock_mask, mask_disk)
 
         # Apply morphological operations to clean up the mask
         kernel = np.ones(
             (self.ROCK_MORPH_KERNEL_SIZE, self.ROCK_MORPH_KERNEL_SIZE),
             np.uint8,
         )
-        combined_mask = cv.morphologyEx(combined_mask, cv.MORPH_OPEN, kernel)
-        combined_mask = cv.morphologyEx(combined_mask, cv.MORPH_CLOSE, kernel)
+        processed_mask = cv.morphologyEx(rock_mask, cv.MORPH_OPEN, kernel)
+        processed_mask = cv.morphologyEx(
+            processed_mask, cv.MORPH_CLOSE, kernel
+        )
+
+        # Create an even mask to make all pixels outside the disk appear
+        # black and consequently make sure there are no disk edge
+        # defects. This is done by using a slightly smaller disk
+        cleanup_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv.circle(cleanup_mask, disk_center, disk_radius - 4, 255, -1)
+        processed_mask = cv.bitwise_and(processed_mask, cleanup_mask)
+
+        cv.imshow("processed mask", processed_mask)
 
         # Find contours of potential rocks
         contours, _ = cv.findContours(
-            combined_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
+            processed_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
         )
 
-        # Filter contours by area and ensure they're within disk
+        # Filter contours by area.
         detected_rocks = []
-
         for contour in contours:
             area = cv.contourArea(contour)
 
-            if self.ROCK_MIN_AREA_PIXELS <= area <= self.ROCK_MAX_AREA_PIXELS:
+            # The number of pixels that are
+            if (
+                int(self.ROCK_MIN_AREA_PIXELS * self._frame_scale_factor**2)
+                <= area
+                <= int(self.ROCK_MAX_AREA_PIXELS * self._frame_scale_factor**2)
+            ):
                 # Calculate centroid
                 moments = cv.moments(contour)
                 if moments["m00"] != 0:
                     centroid_x = int(moments["m10"] / moments["m00"])
                     centroid_y = int(moments["m01"] / moments["m00"])
 
-                    distance_from_center = np.sqrt(
-                        (centroid_x - disk_center[0]) ** 2
-                        + (centroid_y - disk_center[1]) ** 2
+                    # Get minimum area rectangle (can be rotated)
+                    min_rect = cv.minAreaRect(contour)
+                    detected_rocks.append(
+                        (min_rect, (centroid_x, centroid_y), area)
                     )
 
-                    if distance_from_center <= disk_radius:
-                        # Get minimum area rectangle (can be rotated)
-                        min_rect = cv.minAreaRect(contour)
-                        detected_rocks.append(
-                            (min_rect, (centroid_x, centroid_y), area)
-                        )
-
+        # Return empty list if no rocks detected.
         if not detected_rocks:
-            raise ValueError("No rocks detected within the disk boundaries")
+            return []
 
         if visualize:
             visualization_frame = self._visualize_rocks(frame, detected_rocks)
             self._display("Rocks", visualization_frame)
 
-            print(f"Detected {len(detected_rocks)} rocks within the disk")
-            for i, (min_rect, centroid, area) in enumerate(detected_rocks):
-                center, (width, height), angle = min_rect
-                print(
-                    f"  Rock {i + 1}: Center {centroid}, Size {width:.1f}x{height:.1f}, Angle {angle:.1f}°, Area {area:.1f}"
-                )
-
-        self._rocks_result = detect_rocks
+        self._rocks_result = detected_rocks
         return detected_rocks
+
+    def detect_central_arc():
+        """
+        TODO
+        """
+
+        pass
 
     # TODO need to be very careful with the order of things.
     # TODO add a has been rotated flag
-    def visualize_all_detections(self, frame, window_name="All Detections"):
+    def visualize_all_detections(
+        self, frame: np.ndarray, window_name: str = "All Detections"
+    ) -> np.ndarray:
         """
         Visualize all detections that have been called.
 
@@ -1463,12 +1529,16 @@ class MicromanipulatorVision:
         cv.destroyAllWindows()
         return result_frame
 
-    def clear_detection_cache(self):
+    def clear_detection_cache(self) -> None:
         """Reset all cached detection results."""
         self._orientation_result = None
         self._disk_result = None
         self._robot_head_result = None
         self._rocks_result = None
+
+    # TODO
+    def detect_end_effector_tip():
+        pass
 
 
 # ==============================================================================
@@ -1478,7 +1548,7 @@ class MicromanipulatorVision:
 
 
 with MicromanipulatorVision(
-    frame_scale_factor=0.6, calibration_debug=False
+    frame_scale_factor=0.8, calibration_debug=False
 ) as vis:
     # while True:
     #     frame = vis.capture_frame()
@@ -1493,15 +1563,11 @@ with MicromanipulatorVision(
     #         break
 
     # cv.destroyAllWindows()
-    vis._initialise_camera()
-    print("start")
-    vis.set_camera_settings()
+    # vis.set_camera_settings()
     frame = vis.capture_frame()
     resized_frame = vis.scale_frame(frame)
-    corrected_orientation = vis.correct_frame_orientation(resized_frame, True)
-    center, radius = vis.detect_disk(corrected_orientation, True)
-    centroid = vis.detect_robot_head(corrected_orientation, True)
-    detect_rocks = vis.detect_rocks(
-        corrected_orientation, center, radius, True
-    )
+    corrected_orientation = vis.correct_frame_orientation(resized_frame, False)
+    center, radius = vis.detect_disk(corrected_orientation, False)
+    centroid = vis.detect_robot_head(corrected_orientation, False)
+    detect_rocks = vis.detect_rocks(corrected_orientation, True)
     print(vis._orientation_angle_error)
