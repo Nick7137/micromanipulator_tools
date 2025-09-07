@@ -4,38 +4,12 @@
 # TODO only want to rotate one direction to stop backlash?
 # TODO implement big brain algorithm that decides which rock to go for.
 
-import time
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from micromanipulator_tools import (
-    NanoControl,
-    NanoControlError,
-    NanoControlCommandError,
-    NanoControlConnectionError,
-    Turntable,
-    TurntableError,
-    TurntableConnectionError,
-    TurntableCommandError,
-    TurntableTimeoutError,
-)
-
-__all__ = [
-    "time",
-    "sys",
-    "os",
-    "NanoControl",
-    "NanoControlError",
-    "NanoControlCommandError",
-    "NanoControlConnectionError",
-    "Turntable",
-    "TurntableError",
-    "TurntableConnectionError",
-    "TurntableCommandError",
-    "TurntableTimeoutError",
-]
+from micromanipulator_tools import NanoControl, Turntable, Vision
 
 
 SPEED_PRESETS = {
@@ -55,34 +29,33 @@ SPEED_PRESETS = {
 
 
 def main():
-    try:
-        with NanoControl("COM19") as nc:
-            with Turntable("COM17") as tt:
-                # tt.rotate(60, reverse=False)
+    with (
+        NanoControl("COM19") as nc,
+        Turntable("COM17") as tt,
+        Vision(frame_scale_factor=0.6, calibration_debug=False) as vis,
+    ):
+        # tt.rotate(60, reverse=False)
 
-                active_speed_profile = 1
+        active_speed_profile = 1
 
-                nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
-                nc.change_speed_profile_to(active_speed_profile)
+        nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
+        nc.change_speed_profile_to(active_speed_profile)
 
-                # nc.drive_base_joint()
-                nc.drive_elbow_joint()
-                # nc.drive_tweezers()
+        # nc.drive_base_joint()
+        nc.drive_elbow_joint()
+        # nc.drive_tweezers()
 
-                # nc.drive_base_joint(reverse=True)
-                # nc.drive_elbow_joint(reverse=True)
-                # nc.drive_tweezers(reverse=True)
+        # nc.drive_base_joint(reverse=True)
+        # nc.drive_elbow_joint(reverse=True)
+        # nc.drive_tweezers(reverse=True)
 
-                # for i in range(3):
-                #     nc.drive_base_joint(reverse=True)
-                #     time.sleep(5)
-                #     nc.drive_base_joint(reverse=False)
-                #     time.sleep(5)
+        # for i in range(3):
+        #     nc.drive_base_joint(reverse=True)
+        #     time.sleep(5)
+        #     nc.drive_base_joint(reverse=False)
+        #     time.sleep(5)
 
-                nc.stop()
-
-    except Exception as e:
-        print(f"{e}")
+        nc.stop()
 
 
 if __name__ == "__main__":

@@ -1,12 +1,11 @@
 # TODO get rid of all TODO's
 # TODO make file header comment
 # TODO make the docstrings good.
-# TODO inline comments
 # TODO turn into class later.
-# TODO create a visualise everything function and add text to it.
-# TODO make all spelling american, center, visualize etc.
+# TODO create a visualize everything function and add text to it.
 # TODO go through all the code and check if any of it is unused or completely irrelevent
 # TODO break class up into smaller classes if possible
+# TODO make all errors have the name of the class in them.
 
 # =============================================================================
 
@@ -45,26 +44,26 @@ def tested(func):
     return func
 
 
-class MicromanipulatorVisionError(Exception):
+class VisionError(Exception):
     """
-    Base exception for all MicromanipulatorVision-related errors.
+    Base exception for all Vision-related errors.
 
-    This is the parent class for all MicromanipulatorVision-specific
-    exceptions. Catch this to handle any MicromanipulatorVision error
+    This is the parent class for all Vision-specific
+    exceptions. Catch this to handle any Vision error
     generically.
 
     Example:
         try:
-            with MicromanipulatorVision(0) as camera:
+            with Vision(0) as camera:
                 camera._calibration_solve_constants()
-        except MicromanipulatorVisionError as e:
+        except VisionError as e:
             print(f"Micromanipulator vision error: {e}")
     """
 
     @tested
     def __init__(self, message: str) -> None:
         """
-        Initialise the MicromanipulatorVisionError with a descriptive
+        Initialize the VisionError with a descriptive
         message.
 
         Args:
@@ -73,10 +72,10 @@ class MicromanipulatorVisionError(Exception):
         super().__init__(message)
 
 
-class MicromanipulatorVisionConnectionError(MicromanipulatorVisionError):
+class VisionConnectionError(VisionError):
     """
     Exception for camera connection and hardware issues. Derived from
-    the MicromanipulatorVisionError class.
+    the VisionError class.
     """
 
     @tested
@@ -84,10 +83,10 @@ class MicromanipulatorVisionConnectionError(MicromanipulatorVisionError):
         super().__init__(message)
 
 
-class MicromanipulatorVisionCalibrationError(MicromanipulatorVisionError):
+class VisionCalibrationError(VisionError):
     """
     Exception for camera calibration processing issues. Derived from
-    the MicromanipulatorVisionError class.
+    the VisionError class.
     """
 
     @tested
@@ -95,7 +94,7 @@ class MicromanipulatorVisionCalibrationError(MicromanipulatorVisionError):
         super().__init__(message)
 
 
-class MicromanipulatorVision:
+class Vision:
     """
     TODO talk about calibration height with tool and the type of camera logi c930e- specs and setting focus.
     """
@@ -113,7 +112,7 @@ class MicromanipulatorVision:
     DEFAULT_FOCUS_LEVEL = 45
 
     # Calibration specific settings
-    CHESSBOARD_SIZE = (9, 6)  # (num_rows, num_cols) num inner corners
+    CHESSBOARD_SIZE = (9, 6)
     CALIBRATION_IMAGES_FOLDER = "calibration_images"
     CALIBRATION_FILE = "calibration_data.npz"
     CALIBRATION_DISPLAY_TIME_MS = 100
@@ -149,9 +148,9 @@ class MicromanipulatorVision:
     ROBOT_HEAD_MIN_AREA = 500
     ROBOT_HEAD_APPROX_EPSILON = 0.02
 
-    # Rock detection constants
-    ROCK_GRAY_UPPER_THRESHOLD = 60
-    ROCK_MIN_AREA_PIXELS = 50
+    # Rock detection constants.
+    ROCK_GRAY_UPPER_THRESHOLD = 80
+    ROCK_MIN_AREA_PIXELS = 20
     ROCK_MAX_AREA_PIXELS = 5000
     ROCK_BLUR_KERNEL = (3, 3)
     ROCK_MORPH_KERNEL_SIZE = 3
@@ -163,7 +162,7 @@ class MicromanipulatorVision:
     CYAN = (255, 255, 0)
 
     # -------------------------------------------------------------------------
-    # Initialisation methods---------------------------------------------------
+    # Initialization methods---------------------------------------------------
     # -------------------------------------------------------------------------
 
     @tested
@@ -174,7 +173,7 @@ class MicromanipulatorVision:
         calibration_debug: bool = False,
     ) -> None:
         """
-        Initialize MicromanipulatorVision with camera and calibration
+        Initialize Vision with camera and calibration
         setup.
 
         Creates a new vision system instance with the specified camera
@@ -190,7 +189,7 @@ class MicromanipulatorVision:
                 output and visualization. Defaults to False.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If calibration
+            VisionCalibrationError: If calibration
                 creation or loading fails.
 
         Note:
@@ -218,12 +217,6 @@ class MicromanipulatorVision:
         self._translation_vecs: Optional[List[np.ndarray]] = None
         self._reprojection_error: Optional[float] = None
 
-        # Cached detection results
-        self._orientation_result = None
-        self._disk_result = None
-        self._robot_head_result = None
-        self._rocks_result = None
-
         # Check and create default calibration if missing, then load
         default_path = os.path.join(self._current_dir, self.CALIBRATION_FILE)
         if not os.path.exists(default_path):
@@ -231,12 +224,12 @@ class MicromanipulatorVision:
         self._load_calibration_data()
 
     @tested
-    def __enter__(self) -> "MicromanipulatorVision":
+    def __enter__(self) -> "Vision":
         """
         Enter the runtime context for camera resource management.
 
         Returns:
-            self: The MicromanipulatorVision instance
+            self: The Vision instance
         """
 
         return self
@@ -259,14 +252,14 @@ class MicromanipulatorVision:
     @tested
     def __str__(self) -> str:
         """
-        Return a string representation of the MicromanipulatorVision
+        Return a string representation of the Vision
         object.
 
         Returns:
             str: Human-readable description of the object state
         """
 
-        return f"MicromanipulatorVision(camera_index={self._camera_index})"
+        return f"Vision(camera_index={self._camera_index})"
 
     # -------------------------------------------------------------------------
     # Private camera calibration methods---------------------------------------
@@ -285,7 +278,7 @@ class MicromanipulatorVision:
                 corresponding filenames.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If no frames found
+            VisionCalibrationError: If no frames found
                 or if no frames could be loaded.
         """
 
@@ -300,8 +293,8 @@ class MicromanipulatorVision:
         frame_path_list = glob.glob(os.path.join(calibration_dir, "*.jpg"))
 
         if len(frame_path_list) == 0:
-            raise MicromanipulatorVisionCalibrationError(
-                f"MicromanipulatorVision._calibration_load_frames: "
+            raise VisionCalibrationError(
+                f"Vision._calibration_load_frames: "
                 f"No calibration frames found in {calibration_dir}. "
                 f"Please add .jpg calibration frames to this directory."
             )
@@ -323,8 +316,8 @@ class MicromanipulatorVision:
                 print(f"WARNING: Could not load {frame_path}")
 
         if len(frames) == 0:
-            raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_load_frames: "
+            raise VisionCalibrationError(
+                "Vision._calibration_load_frames: "
                 "No valid calibration frames could be loaded."
             )
 
@@ -351,7 +344,7 @@ class MicromanipulatorVision:
                 Object points, frame points, and actual frame size.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If no chessboard
+            VisionCalibrationError: If no chessboard
                 patterns detected in any frames.
         """
 
@@ -424,8 +417,8 @@ class MicromanipulatorVision:
         cv.destroyAllWindows()
 
         if len(object_points_list) == 0:
-            raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_find_chessboard_corners: "
+            raise VisionCalibrationError(
+                "Vision._calibration_find_chessboard_corners: "
                 "No chessboard patterns were detected in any frames."
             )
 
@@ -460,20 +453,20 @@ class MicromanipulatorVision:
                 (width, height).
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If calibration data
+            VisionCalibrationError: If calibration data
                 is missing or mismatched between object and frame
                 points.
         """
 
         if len(object_points) == 0 or len(frame_points) == 0:
-            raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_solve_constants: Cannot "
+            raise VisionCalibrationError(
+                "Vision._calibration_solve_constants: Cannot "
                 "calibrate: no object points or frame points provided."
             )
 
         if len(object_points) != len(frame_points):
-            raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_solve_constants: "
+            raise VisionCalibrationError(
+                "Vision._calibration_solve_constants: "
                 f"Mismatch: {len(object_points)} object point sets vs "
                 f"{len(frame_points)} frame point sets."
             )
@@ -486,11 +479,7 @@ class MicromanipulatorVision:
             rotation_vecs,
             translation_vecs,
         ) = cv.calibrateCamera(
-            object_points,
-            frame_points,
-            frame_size,
-            None,  # Initial camera matrix
-            None,  # Initial distortion coefficients
+            object_points, frame_points, frame_size, None, None
         )
 
         # Store calibration results
@@ -510,14 +499,14 @@ class MicromanipulatorVision:
         use.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If calibration data
+            VisionCalibrationError: If calibration data
                 is incomplete (missing camera matrix or distortion
                 coefficients).
         """
 
         if self._camera_matrix is None or self._dist_coeffs is None:
-            raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision._calibration_save_constants: "
+            raise VisionCalibrationError(
+                "Vision._calibration_save_constants: "
                 "Calibration data is incomplete. Camera matrix or distortion "
                 "coefficients missing."
             )
@@ -545,7 +534,7 @@ class MicromanipulatorVision:
         results to file.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If any step in the
+            VisionCalibrationError: If any step in the
                 calibration process fails.
         """
 
@@ -560,8 +549,8 @@ class MicromanipulatorVision:
             self._calibration_save_constants()
 
         except Exception as e:
-            raise MicromanipulatorVisionCalibrationError(
-                f"MicromanipulatorVision._calibration_run: "
+            raise VisionCalibrationError(
+                f"Vision._calibration_run: "
                 f"Failed to create calibration: {str(e)}"
             )
 
@@ -575,7 +564,7 @@ class MicromanipulatorVision:
         in instance variables.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If calibration file
+            VisionCalibrationError: If calibration file
                 not found or data cannot be loaded/parsed.
         """
 
@@ -584,8 +573,8 @@ class MicromanipulatorVision:
 
         # Check if file exists
         if not os.path.exists(load_path):
-            raise MicromanipulatorVisionCalibrationError(
-                f"MicromanipulatorVision._load_calibration_data: "
+            raise VisionCalibrationError(
+                f"Vision._load_calibration_data: "
                 f"Calibration file not found: {load_path}"
             )
 
@@ -603,8 +592,8 @@ class MicromanipulatorVision:
             )
 
         except Exception as e:
-            raise MicromanipulatorVisionCalibrationError(
-                f"MicromanipulatorVision._load_calibration_data: "
+            raise VisionCalibrationError(
+                f"Vision._load_calibration_data: "
                 f"Failed to load calibration data from {load_path}: {str(e)}"
             )
 
@@ -613,19 +602,19 @@ class MicromanipulatorVision:
     # -------------------------------------------------------------------------
 
     @tested
-    def _initialise_camera(self) -> None:
+    def _initialize_camera(self) -> None:
         """
-        Initialise camera connection and set the frame dimensions.
+        Initialize camera connection and set the frame dimensions.
 
         Opens VideoCapture connection to the specified camera index and
         sets the camera to highest available resolution.
 
         Raises:
-            MicromanipulatorVisionConnectionError: If camera cannot be
+            VisionConnectionError: If camera cannot be
                 opened or is not available.
         """
 
-        # Check if already initialised.
+        # Check if already initialized.
         if self._camera is not None:
             return
 
@@ -633,7 +622,7 @@ class MicromanipulatorVision:
 
         if not self._camera.isOpened():
             self._camera = None
-            raise MicromanipulatorVisionConnectionError(
+            raise VisionConnectionError(
                 f"Failed to open camera {self._camera_index}"
             )
 
@@ -645,9 +634,8 @@ class MicromanipulatorVision:
         self._camera.set(cv.CAP_PROP_AUTOFOCUS, 0)
         self._camera.set(cv.CAP_PROP_FOCUS, self.DEFAULT_FOCUS_LEVEL)
 
-        # print(f"Camera {self._camera_index} initialised")
+        # print(f"Camera {self._camera_index} initialized")
 
-    # TODO understand the maths here - rename vars
     @tested
     def _visualize_orientation(
         self, frame: np.ndarray, theta: float, rho: float
@@ -667,19 +655,19 @@ class MicromanipulatorVision:
         visualization_frame = frame.copy()
 
         # Convert from polar to cartesian.
-        x_comp = np.cos(theta)
-        y_comp = np.sin(theta)
+        a = np.cos(theta)
+        b = np.sin(theta)
 
         # Get the point on the line closest to the origin
-        x0 = x_comp * rho
-        y0 = y_comp * rho
+        x0 = a * rho
+        y0 = b * rho
 
         # Large number to span entire window.
         span = 1000
-        x1 = int(x0 + span * (-y_comp))
-        y1 = int(y0 + span * (x_comp))
-        x2 = int(x0 - span * (-y_comp))
-        y2 = int(y0 - span * (x_comp))
+        x1 = int(x0 + span * (-b))
+        y1 = int(y0 + span * (a))
+        x2 = int(x0 - span * (-b))
+        y2 = int(y0 - span * (a))
 
         thickness = 2
         cv.line(visualization_frame, (x1, y1), (x2, y2), self.RED, thickness)
@@ -713,7 +701,7 @@ class MicromanipulatorVision:
             visualization_frame, center, radius, self.CYAN, outline_thickness
         )
 
-        # Show the centre of the disk
+        # Show the center of the disk
         cv.circle(
             visualization_frame, center, central_dot_radius, self.RED, fill
         )
@@ -825,6 +813,149 @@ class MicromanipulatorVision:
         cv.destroyAllWindows()
 
     # -------------------------------------------------------------------------
+    # Private helper functions for detection methods---------------------------
+    # -------------------------------------------------------------------------
+
+    @tested
+    def _create_robot_head_mask(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Create binary mask for robot head detection using HSV color
+        filtering.
+
+        Converts the input frame to HSV color space and creates a binary
+        mask where green robot head regions appear white and all other
+        regions appear black. Applies morphological operations to clean
+        noise and fill gaps.
+
+        Args:
+            frame (np.ndarray): Input BGR frame to process.
+
+        Returns:
+            np.ndarray: Binary mask with robot head regions in white
+                (255) and background in black (0).
+        """
+
+        # Convert BGR to HSV for better color detection
+        hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+
+        # Create binary mask, green color becomes white and non green
+        # becomes black.
+        mask = cv.inRange(
+            hsv,
+            self.ROBOT_HEAD_HSV_LOWER_THRESHOLD,
+            self.ROBOT_HEAD_HSV_UPPER_THRESHOLD,
+        )
+
+        # Apply morphological operations to remove noise and clean up
+        # the mask
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
+        mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+
+        return mask
+
+    @tested
+    def _find_robot_head_contour(
+        self, mask: np.ndarray
+    ) -> Optional[np.ndarray]:
+        """
+        Find the largest quadrilateral contour in the robot head mask.
+
+        Analyzes the binary mask to locate contours, filters them by
+        area and quadrilateral shape, then returns the largest valid
+        contour representing the robot head.
+
+        Args:
+            mask (np.ndarray): Binary mask with robot head regions in
+                white and background in black.
+
+        Returns:
+            Optional[np.ndarray]: Largest quadrilateral contour if
+                found, None if no valid contours detected.
+        """
+
+        # Find outlines of white regions of mask
+        contours, _ = cv.findContours(
+            mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
+        )
+
+        if not contours:
+            return None
+
+        # Filter contours by area and find quadrilaterals
+        valid_contours = []
+        for contour in contours:
+            area = cv.contourArea(contour)
+            if area > self.ROBOT_HEAD_MIN_AREA:
+                # Approximate contour to polygon
+                epsilon = self.ROBOT_HEAD_APPROX_EPSILON * cv.arcLength(
+                    contour, True
+                )
+                # Check if it's approximately a quadrilateral
+                approx = cv.approxPolyDP(contour, epsilon, True)
+                if len(approx) == 4:
+                    valid_contours.append((contour, area))
+
+        if not valid_contours:
+            return None
+
+        # Return the largest valid contour
+        return max(valid_contours, key=lambda x: x[1])[0]
+
+    @tested
+    def _find_prismatic_link(
+        self, head_rect
+    ) -> Tuple[Tuple[float, float], Tuple[float, float], float]:
+        """
+        Calculate prismatic link position and dimensions from robot head
+        rectangle.
+
+        Uses the robot head's minimum area rectangle to determine the
+        position, size, and orientation of the attached prismatic link.
+        The link is positioned adjacent to the head based on head angle.
+
+        Args:
+            head_rect: Minimum area rectangle from cv.minAreaRect()
+                containing ((center_x, center_y), (width, height),
+                angle).
+
+        Returns:
+            Tuple[Tuple[float, float], Tuple[float, float], float]: Link
+                rectangle as ((center_x, center_y), (width, height),
+                angle) in same format as cv.minAreaRect().
+        """
+
+        head_center, (head_width, head_height), head_angle_deg = head_rect
+
+        # Convert from what cv returns to angles that range from -90 to 90
+        # See: https://stackoverflow.com/questions/15956124/minarearect-angles-unsure-about-the-angle-returned
+        if head_width < head_height:
+            head_angle_deg -= 90
+
+        # Calculate link position
+        link_offset = head_height
+        head_angle_rad = abs(np.radians(head_angle_deg))
+
+        # Determine link center based on head angle
+        if head_angle_deg <= 0:
+            link_center_x = head_center[0] + link_offset * np.sin(
+                head_angle_rad
+            )
+        else:
+            link_center_x = head_center[0] - link_offset * np.sin(
+                head_angle_rad
+            )
+
+        link_center_y = head_center[1] + link_offset * np.cos(head_angle_rad)
+        link_center = (link_center_x, link_center_y)
+
+        # Calculate link dimensions
+        link_width = head_width * 0.4
+        link_length = head_height * 2
+
+        return (link_center, (link_width, link_length), head_angle_deg)
+
+    # -------------------------------------------------------------------------
     # Public interface: calibration and settings-------------------------------
     # -------------------------------------------------------------------------
 
@@ -837,7 +968,7 @@ class MicromanipulatorVision:
         error, and quality assessment for the calibration.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If calibration data
+            VisionCalibrationError: If calibration data
                 is not available.
         """
 
@@ -891,7 +1022,7 @@ class MicromanipulatorVision:
         """
         Open camera settings dialog and display live video feed.
 
-        This method initialises the camera, opens the built-in camera
+        This method initializes the camera, opens the built-in camera
         settings dialog, and displays a live video feed of the
         undistorted camera output. It allows the user to adjust camera
         settings visually and see the results in real-time.
@@ -902,16 +1033,16 @@ class MicromanipulatorVision:
         "resources/camera_settings"
 
         Raises:
-            MicromanipulatorVisionConnectionError: If camera
-                initialisation fails or connection is lost.
-            MicromanipulatorVisionCalibrationError: If undistortion
+            VisionConnectionError: If camera
+                Initialization fails or connection is lost.
+            VisionCalibrationError: If undistortion
                 fails due to missing calibration data.
         """
 
         print(
             "Entered settings configuration mode. Press 'q' to exit when done."
         )
-        self._initialise_camera()
+        self._initialize_camera()
         self._camera.set(cv.CAP_PROP_SETTINGS, 1)
 
         while True:
@@ -936,39 +1067,39 @@ class MicromanipulatorVision:
     def capture_frame(self) -> np.ndarray:
         """
         Capture a single frame from the camera. The camera must be
-        initialised before calling this method.
+        initialized before calling this method.
 
         Returns:
             np.ndarray: Captured frame as BGR frame array.
 
         Raises:
-            MicromanipulatorVisionConnectionError: If camera is not
+            VisionConnectionError: If camera is not
                 initialized, frame capture fails, or camera connection
                 is lost.
 
         Example:
-            with MicromanipulatorVision() as vision:
+            with Vision() as vision:
                 frame = vision.capture_frame()
                 cv.imshow("Live Frame", frame)
         """
 
-        self._initialise_camera()
+        self._initialize_camera()
 
         if not self._camera.isOpened():
-            raise MicromanipulatorVisionConnectionError(
-                "MicromanipulatorVision.capture_frame: Camera connection lost"
+            raise VisionConnectionError(
+                "Vision.capture_frame: Camera connection lost"
             )
 
         ret, frame = self._camera.read()
 
         if not ret:
-            raise MicromanipulatorVisionConnectionError(
-                "MicromanipulatorVision.capture_frame: Failed to capture frame"
+            raise VisionConnectionError(
+                "Vision.capture_frame: Failed to capture frame"
             )
 
         if frame is None:
-            raise MicromanipulatorVisionConnectionError(
-                "MicromanipulatorVision.capture_frame: Captured frame is None"
+            raise VisionConnectionError(
+                "Vision.capture_frame: Captured frame is None"
             )
         return frame
 
@@ -978,7 +1109,7 @@ class MicromanipulatorVision:
         Resize an input frame based on the instance's scale factor.
 
         Scales the input frame using the frame_scale_factor set during
-        object initialisation (or uses DEFAULT_FRAME_SCALE_FACTOR).
+        object Initialization (or uses DEFAULT_FRAME_SCALE_FACTOR).
         This is useful for resizing frames for display or processing
         while maintaining aspect ratio.
 
@@ -1060,7 +1191,7 @@ class MicromanipulatorVision:
             np.ndarray: Orientation-corrected frame.
 
         Raises:
-            MicromanipulatorVisionError: If orientation angle cannot be
+            VisionError: If orientation angle cannot be
                 detected from the frame.
 
         Note:
@@ -1104,7 +1235,7 @@ class MicromanipulatorVision:
             np.ndarray: Undistorted frame.
 
         Raises:
-            MicromanipulatorVisionCalibrationError: If calibration data
+            VisionCalibrationError: If calibration data
                 is missing.
             ValueError: If alpha is not between 0.0 and 1.0.
 
@@ -1114,14 +1245,14 @@ class MicromanipulatorVision:
         """
 
         if self._camera_matrix is None or self._dist_coeffs is None:
-            raise MicromanipulatorVisionCalibrationError(
-                "MicromanipulatorVision.undistort_frame: "
+            raise VisionCalibrationError(
+                "Vision.undistort_frame: "
                 "Camera matrix or distortion coefficients are missing."
             )
 
         if not self.ALPHA_MIN_VALUE <= alpha <= self.ALPHA_MAX_VALUE:
             raise ValueError(
-                "MicromanipulatorVision.undistort_frame: Alpha must be "
+                "Vision.undistort_frame: Alpha must be "
                 f"between 0.0 and 1.0, got {alpha}"
             )
 
@@ -1173,12 +1304,8 @@ class MicromanipulatorVision:
                 clockwise rotation needed.
 
         Raises:
-            MicromanipulatorVisionError: If no lines detected for
+            VisionError: If no lines detected for
                 orientation calculation.
-
-        Note:
-            Caches result in _orientation_result for visualization.
-            Angle is normalized to [-90, 90] degree range.
         """
 
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
@@ -1186,8 +1313,8 @@ class MicromanipulatorVision:
         lines = cv.HoughLines(edges, 1, np.pi / 1200, threshold=30)
 
         if lines is None:
-            raise MicromanipulatorVisionError(
-                "MicromanipulatorVision.detect_orientation_angle_error: "
+            raise VisionError(
+                "Vision.detect_orientation_angle_error: "
                 "No lines detected for orientation calculation. Check "
                 "position of microscope bed in the camera view."
             )
@@ -1210,10 +1337,8 @@ class MicromanipulatorVision:
             )
             self._display("Orientation Line", visualization_frame)
 
-        self._orientation_result = (theta, rho)
         return angle_deg
 
-    # TODO understand how it works
     @tested
     def detect_disk(
         self, frame: np.ndarray, visualize: bool = False
@@ -1236,10 +1361,6 @@ class MicromanipulatorVision:
 
         Raises:
             ValueError: If no disk detected in the frame.
-
-        Note:
-            Caches result in _disk_result. Detection parameters scaled
-            by frame_scale_factor for different resolutions.
         """
 
         # Convert to grayscale
@@ -1275,140 +1396,100 @@ class MicromanipulatorVision:
                 )
                 self._display("Detected Disk", visualization_frame)
 
-            self._disk_result = (center, radius)
             return (center, radius)
         else:
-            raise ValueError("No disk detected in the frame")
+            raise ValueError("No disk detected in the frame.")
 
-    # TODO understand how it works
     @tested
+    # TODO make this return the position of the robot in polar
     def detect_robot_head(
         self, frame: np.ndarray, visualize: bool = False
-    ) -> Tuple[int, int]:
+    ) -> Optional[Tuple[Tuple[int, int], np.ndarray]]:
         """
-        Detect green robot head quadrilateral and return its centroid.
+        Detect robot head position and contour.
 
-        Uses HSV color masking to isolate green objects, applies
-        morphological operations for noise reduction, then finds
-        quadrilateral contours and selects the largest valid one.
+        Locates the green robot head by creating a binary mask, finding
+        quadrilateral contours, and calculating the combined head and
+        prismatic link position. Returns the centroid of the head only,
+        along with the combined contour.
 
         Args:
-            frame (np.ndarray): Input frame (BGR format) to analyze.
+            frame (np.ndarray): Input BGR frame to analyze.
             visualize (bool, optional): If True, display detected head
-                with green outline and red centroid. Defaults to False.
+                and link with green contour and red center. Defaults to
+                False.
 
         Returns:
-            Tuple[int, int]: (centroid_x, centroid_y) coordinates of the
-                robot head center in pixels.
-
-        Raises:
-            ValueError: If no green objects or quadrilaterals detected.
+            Optional[Tuple[Tuple[int, int], np.ndarray]]:
+                ((centroid_x, centroid_y), combined_contour) where
+                centroid is the head center coordinates and
+                combined_contour includes both head and prismatic link,
+                or None if no head detected.
 
         Note:
-            Caches result in _robot_head_result. Uses HSV thresholds
-            defined in class constants for green color detection.
+            Visualization shows combined head and link shape but
+            centroid coordinates are calculated from head only.
         """
 
-        # Convert BGR to HSV for better color detection
-        hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+        robot_head_mask = self._create_robot_head_mask(frame)
+        robot_head_contour = self._find_robot_head_contour(robot_head_mask)
 
-        # Create mask for green color
-        mask = cv.inRange(
-            hsv,
-            self.ROBOT_HEAD_HSV_LOWER_THRESHOLD,
-            self.ROBOT_HEAD_HSV_UPPER_THRESHOLD,
+        if robot_head_contour is None:
+            print("Robot head not detected.")
+            return None
+
+        # Get the minimum area rectangle to find robot head orientation.
+        head_rect = cv.minAreaRect(robot_head_contour)
+
+        # Create link rectangle
+        link_rect = self._find_prismatic_link(head_rect)
+        link_points = cv.boxPoints(link_rect)
+        link_points = np.int32(link_points)
+
+        # Combine head mask and link mask into one contour.
+        head_points = cv.boxPoints(head_rect)
+        head_points = np.int32(head_points)
+
+        # Create a new mask with both rectangles
+        combined_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv.fillPoly(combined_mask, [head_points], 255)
+        cv.fillPoly(combined_mask, [link_points], 255)
+
+        # Find the combined contour
+        combined_contours, _ = cv.findContours(
+            combined_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
         )
+        combined_contour = max(combined_contours, key=cv.contourArea)
 
-        # Apply morphological operations to clean up the mask
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
-        mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
-
-        # Find contours
-        contours, _ = cv.findContours(
-            mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
-        )
-
-        if not contours:
-            raise ValueError("No green objects detected in the frame")
-
-        # Filter contours by area and find quadrilaterals
-        valid_contours = []
-        for contour in contours:
-            area = cv.contourArea(contour)
-            if area > self.ROBOT_HEAD_MIN_AREA:
-                # Approximate contour to polygon
-                epsilon = self.ROBOT_HEAD_APPROX_EPSILON * cv.arcLength(
-                    contour, True
-                )
-                approx = cv.approxPolyDP(contour, epsilon, True)
-
-                # Check if it's approximately a quadrilateral (4 vertices)
-                if len(approx) == 4:
-                    valid_contours.append((contour, area))
-
-        if not valid_contours:
-            raise ValueError("No green quadrilateral detected in the frame")
-
-        # Select the largest valid quadrilateral
-        largest_contour = max(valid_contours, key=lambda x: x[1])[0]
-
-        # Calculate centroid using moments
-        moments = cv.moments(largest_contour)
-        if moments["m00"] != 0:
-            centroid_x = int(moments["m10"] / moments["m00"])
-            centroid_y = int(moments["m01"] / moments["m00"])
-        else:
-            # Fallback: use bounding box center
-            x, y, w, h = cv.boundingRect(largest_contour)
-            centroid_x = x + w // 2
-            centroid_y = y + h // 2
+        # Calculate centroid using moments of the head ONLY (not the
+        # combined shape which includes the last link).
+        moments = cv.moments(robot_head_contour)
+        centroid_x = int(moments["m10"] / moments["m00"])
+        centroid_y = int(moments["m01"] / moments["m00"])
 
         centroid = (centroid_x, centroid_y)
 
         if visualize:
             visualization_frame = self._visualize_robot_head(
-                frame, centroid, largest_contour
+                frame, centroid, combined_contour
             )
-            self._display("Robot Head", visualization_frame)
+            self._display("Robot Head + link", visualization_frame)
 
-        self._robot_head_result = (centroid, largest_contour)
-        return (centroid_x, centroid_y)
+        return (centroid, combined_contour)
 
-    # TODO test the square size of the rocks
+    # TODO clean this up with helper functions.
+    # TODO make this actually return the position and orientation of the rocks in polar.
     def detect_rocks(
         self,
         frame: np.ndarray,
         visualize: bool = False,
-    ) -> List[Tuple[np.ndarray, Tuple[int, int], float]]:
+    ) -> Optional[List[Tuple[np.ndarray, Tuple[int, int], float]]]:
         """
-        Detect dark rock objects within the microscope sample disk.
-
-        Uses grayscale thresholding and contour detection to identify
-        dark objects within the disk boundary. Applies morphological
-        operations and area filtering to reduce noise.
-
-        Args:
-            frame (np.ndarray): Input BGR frame to analyze.
-            visualize (bool, optional): If True, display detected rocks
-                with cyan rectangles and red centers. Defaults to False.
-
-        Returns:
-            List[Tuple[np.ndarray, Tuple[int, int], float]]: List of
-                detected rocks. Each tuple contains (min_rect, centroid,
-                area).
-
-        Note:
-            Automatically calls detect_disk if needed. Returns empty
-            list if no rocks detected. Caches results in _rocks_result.
+        TODO
         """
 
-        # Get disk info from cache or detect it
-        if self._disk_result is None:
-            self.detect_disk(frame, visualize=False)
-        disk_center, disk_radius = self._disk_result
-
-        # Create circular mask for the disk area
+        # Detect the disk and create a circular mask for the disk area.
+        disk_center, disk_radius = self.detect_disk(frame, visualize=False)
         mask_disk = np.zeros(frame.shape[:2], dtype=np.uint8)
         cv.circle(mask_disk, disk_center, disk_radius, 255, -1)
 
@@ -1418,12 +1499,16 @@ class MicromanipulatorVision:
         gray_masked = cv.bitwise_and(gray, mask_disk)
         blurred = cv.GaussianBlur(gray_masked, self.ROCK_BLUR_KERNEL, 0)
 
+        cv.imshow("blurred", blurred)
+
         # Create binary mask for rock colors (dark grays/blacks). We
         # invert the threshold to make the rocks (objects of interest)
         # white - this is convention.
         _, rock_mask = cv.threshold(
             blurred, self.ROCK_GRAY_UPPER_THRESHOLD, 255, cv.THRESH_BINARY_INV
         )
+
+        cv.imshow("blurred", rock_mask)
 
         # Apply morphological operations to clean up the mask
         kernel = np.ones(
@@ -1442,19 +1527,20 @@ class MicromanipulatorVision:
         cv.circle(cleanup_mask, disk_center, disk_radius - 4, 255, -1)
         processed_mask = cv.bitwise_and(processed_mask, cleanup_mask)
 
-        cv.imshow("processed mask", processed_mask)
-
         # Find contours of potential rocks
         contours, _ = cv.findContours(
             processed_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
         )
 
-        # Filter contours by area.
+        cv.imshow("processed mask", processed_mask)
+
+        # Filter contours by area and detect robot for exclusion
+        robot_result = self.detect_robot_head(frame, visualize=False)
+
         detected_rocks = []
         for contour in contours:
             area = cv.contourArea(contour)
 
-            # The number of pixels that are
             if (
                 int(self.ROCK_MIN_AREA_PIXELS * self._frame_scale_factor**2)
                 <= area
@@ -1466,78 +1552,50 @@ class MicromanipulatorVision:
                     centroid_x = int(moments["m10"] / moments["m00"])
                     centroid_y = int(moments["m01"] / moments["m00"])
 
-                    # Get minimum area rectangle (can be rotated)
-                    min_rect = cv.minAreaRect(contour)
-                    detected_rocks.append(
-                        (min_rect, (centroid_x, centroid_y), area)
-                    )
+                    # Check if rock centroid is NOT inside robot area
+                    is_valid_rock = True
+                    if robot_result is not None:
+                        _, robot_contour = robot_result
+                        # Check if centroid is inside robot contour
+                        if (
+                            cv.pointPolygonTest(
+                                robot_contour, (centroid_x, centroid_y), False
+                            )
+                            >= 0
+                        ):
+                            # Rock is inside robot area, exclude it
+                            is_valid_rock = False
 
-        # Return empty list if no rocks detected.
+                    if is_valid_rock:
+                        # Get minimum area rectangle (can be rotated)
+                        min_rect = cv.minAreaRect(contour)
+                        detected_rocks.append(
+                            (min_rect, (centroid_x, centroid_y), area)
+                        )
+
+        # Return None if no rocks detected.
         if not detected_rocks:
-            return []
+            return None
 
         if visualize:
             visualization_frame = self._visualize_rocks(frame, detected_rocks)
             self._display("Rocks", visualization_frame)
 
-        self._rocks_result = detected_rocks
         return detected_rocks
 
-    def detect_central_arc():
+    # TODO make this return the centerline arc and the max and min scaled by the size of the disk.
+    # TODO must ensure the orientation has been corrected before using this function, raise an error if the orientation has not been corrected and this function is called.
+    def detect_workspace():
         """
         TODO
         """
 
         pass
 
-    # TODO need to be very careful with the order of things.
-    # TODO add a has been rotated flag
+    # TODO
     def visualize_all_detections(
         self, frame: np.ndarray, window_name: str = "All Detections"
     ) -> np.ndarray:
-        """
-        Visualize all detections that have been called.
-
-        Only shows detections for methods that have been called.
-        Uses cached results, no re-computation.
-        """
-        result_frame = frame.copy()
-
-        # Draw disk if it was detected
-        if self._disk_result is not None:
-            center, radius = self._disk_result
-            cv.circle(result_frame, center, radius, (255, 255, 0), 2)  # Yellow
-            cv.circle(result_frame, center, 4, (255, 255, 0), -1)
-
-        # Draw robot head if it was detected
-        if self._robot_head_result is not None:
-            centroid = self._robot_head_result
-            cv.circle(result_frame, centroid, 8, (0, 255, 0), -1)  # Green
-
-        # Draw rocks if they were detected
-        if self._rocks_result is not None:
-            for min_rect, centroid, area in self._rocks_result:
-                box_points = cv.boxPoints(min_rect)
-                box_points = np.int32(box_points)
-                cv.drawContours(
-                    result_frame, [box_points], 0, (0, 0, 255), 2
-                )  # Red
-                cv.circle(result_frame, centroid, 3, (0, 0, 255), -1)
-
-        cv.imshow(window_name, result_frame)
-        cv.waitKey(0)
-        cv.destroyAllWindows()
-        return result_frame
-
-    def clear_detection_cache(self) -> None:
-        """Reset all cached detection results."""
-        self._orientation_result = None
-        self._disk_result = None
-        self._robot_head_result = None
-        self._rocks_result = None
-
-    # TODO
-    def detect_end_effector_tip():
         pass
 
 
@@ -1547,9 +1605,7 @@ class MicromanipulatorVision:
 # ==============================================================================
 
 
-with MicromanipulatorVision(
-    frame_scale_factor=0.8, calibration_debug=False
-) as vis:
+with Vision(frame_scale_factor=0.6, calibration_debug=False) as vis:
     # while True:
     #     frame = vis.capture_frame()
     #     # undistorted = vis.undistort_frame(frame)
@@ -1568,6 +1624,5 @@ with MicromanipulatorVision(
     resized_frame = vis.scale_frame(frame)
     corrected_orientation = vis.correct_frame_orientation(resized_frame, False)
     center, radius = vis.detect_disk(corrected_orientation, False)
-    centroid = vis.detect_robot_head(corrected_orientation, False)
+    # centroid = vis.detect_robot_head(corrected_orientation, True)
     detect_rocks = vis.detect_rocks(corrected_orientation, True)
-    print(vis._orientation_angle_error)
