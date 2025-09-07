@@ -27,6 +27,8 @@ SPEED_PRESETS = {
     },
 }
 
+# Note: life-hack type `mode` in powershell to get the COM ports
+
 
 def main():
     with (
@@ -34,7 +36,7 @@ def main():
         Turntable("COM17") as tt,
         Vision(frame_scale_factor=0.6, calibration_debug=False) as vis,
     ):
-        # tt.rotate(60, reverse=False)
+        tt.rotate(60, reverse=False)
 
         active_speed_profile = 1
 
@@ -42,7 +44,8 @@ def main():
         nc.change_speed_profile_to(active_speed_profile)
 
         # nc.drive_base_joint()
-        nc.drive_elbow_joint()
+        # nc.drive_elbow_joint()
+        nc.drive_prismatic_joint(reverse=False)
         # nc.drive_tweezers()
 
         # nc.drive_base_joint(reverse=True)
@@ -55,7 +58,7 @@ def main():
         #     nc.drive_base_joint(reverse=False)
         #     time.sleep(5)
 
-        nc.stop()
+        # nc.stop()
 
 
 if __name__ == "__main__":

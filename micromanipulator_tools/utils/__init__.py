@@ -12,6 +12,13 @@ from .turntable import (
     TurntableTimeoutError,
 )
 
+from .vision import (
+    Vision,
+    VisionError,
+    VisionConnectionError,
+    VisionCalibrationError,
+)
+
 __all__ = [
     "NanoControl",
     "NanoControlError",
@@ -22,4 +29,8 @@ __all__ = [
     "TurntableConnectionError",
     "TurntableCommandError",
     "TurntableTimeoutError",
+    "Vision",
+    "VisionError",
+    "VisionConnectionError",
+    "VisionCalibrationError",
 ]

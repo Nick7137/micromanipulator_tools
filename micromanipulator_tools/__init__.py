@@ -8,6 +8,10 @@ from .utils import (
     TurntableConnectionError,
     TurntableCommandError,
     TurntableTimeoutError,
+    Vision,
+    VisionError,
+    VisionConnectionError,
+    VisionCalibrationError,
 )
 
 __all__ = [
@@ -20,4 +24,8 @@ __all__ = [
     "TurntableConnectionError",
     "TurntableCommandError",
     "TurntableTimeoutError",
+    "Vision",
+    "VisionError",
+    "VisionConnectionError",
+    "VisionCalibrationError",
 ]

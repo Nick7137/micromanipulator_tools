@@ -1,11 +1,11 @@
 # TODO get rid of all TODO's
 # TODO make file header comment
 # TODO make the docstrings good.
-# TODO turn into class later.
 # TODO create a visualize everything function and add text to it.
 # TODO go through all the code and check if any of it is unused or completely irrelevent
-# TODO break class up into smaller classes if possible
+# TODO break class up into simpler subclasses
 # TODO make all errors have the name of the class in them.
+# TODO check for any inconsistencies at all
 
 # =============================================================================
 

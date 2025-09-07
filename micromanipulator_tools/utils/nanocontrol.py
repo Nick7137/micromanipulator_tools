@@ -1030,9 +1030,9 @@ class NanoControl:
     @tested
     def drive_base_joint(
         self,
+        reverse: bool = False,
         step_multiplier: int = DEFAULT_STEP_MULTIPLIER,
         interval_ms: int = DEFAULT_DRIVE_INTERVAL_MS,
-        reverse: bool = False,
     ) -> str:
         """
         Continuously drive the base joint (revolute) counterclockwise;
@@ -1090,9 +1090,9 @@ class NanoControl:
     @tested
     def drive_elbow_joint(
         self,
+        reverse: bool = False,
         step_multiplier: int = DEFAULT_STEP_MULTIPLIER,
         interval_ms: int = DEFAULT_DRIVE_INTERVAL_MS,
-        reverse: bool = False,
     ) -> str:
         """
         Continuously drive the elbow joint (channel B) counterclockwise;
@@ -1131,9 +1131,9 @@ class NanoControl:
     @tested
     def drive_prismatic_joint(
         self,
+        reverse: bool = False,
         step_multiplier: int = DEFAULT_STEP_MULTIPLIER,
         interval_ms: int = DEFAULT_DRIVE_INTERVAL_MS,
-        reverse: bool = False,
     ) -> str:
         """
         Continuously drive the prismatic joint (channel C) outwards;
@@ -1169,9 +1169,9 @@ class NanoControl:
     @tested
     def drive_tweezers(
         self,
+        reverse: bool = False,
         step_multiplier: int = DEFAULT_STEP_MULTIPLIER,
         interval_ms: int = DEFAULT_DRIVE_INTERVAL_MS,
-        reverse: bool = False,
     ) -> str:
         """
         Continuously drive the tweezer joint (channel D) to close.
