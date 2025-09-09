@@ -10,9 +10,11 @@
 # TODO maybe do the visualize orientation line.
 # TODO put text on the visualizations.
 # TODO correct the angle for the robot.
+# TODO make circle not move around
 
 import os
 import glob
+import time
 import threading
 import cv2 as cv
 import numpy as np
@@ -1305,15 +1307,29 @@ class Vision:
             frame_scale_factor or VisionBase.DEFAULT_FRAME_SCALE_FACTOR
         )
 
-        self.camera_manager = ThreadingCameraManager(camera_index)
+        # Thread 1 (Camera I/O) starts here
+        self.camera_manager = ThreadingCameraManager(self.camera_index)
         self.calibration_manager = CalibrationManager(calibration_debug)
         self.frame_processor = FrameProcessor(
-            frame_scale_factor,
+            self.frame_scale_factor,
             self.calibration_manager._camera_matrix,
             self.calibration_manager._dist_coeffs,
         )
         self.object_detector = ObjectDetector(frame_scale_factor)
         self.visualizer = Visualizer()
+
+        # Create the attributes for the processing thread.
+        self._processing_lock = threading.Lock()
+        self.processing_stopped = False
+
+        # These are the shared "mailboxes" for the finished results
+        self.latest_processed_frame: Optional[np.ndarray] = None
+        self.latest_detection_results: dict = {}
+
+        # Thread 2 (Processing) starts here
+        self.processing_thread = threading.Thread(target=self._processing_loop)
+        self.processing_thread.daemon = True
+        self.processing_thread.start()
 
     def __enter__(self):
         """
@@ -1327,6 +1343,12 @@ class Vision:
         TODO
         """
 
+        self.processing_stopped = True
+        if self.processing_thread:
+            self.processing_thread.join()
+        print("Processing thread stopped.")
+
+        # Stop the camera manager
         self.camera_manager._cleanup()
 
     def __str__(self) -> str:
@@ -1347,33 +1369,151 @@ class Vision:
             f"current_focus={focus_level})"
         )
 
-    def _get_processed_frame(self) -> np.ndarray:
+    def _processing_loop(self):
         """
         TODO
         """
 
-        # Capture a new frame
-        raw_frame = self.camera_manager._capture_frame()
+        while not self.processing_stopped:
+            try:
+                # 1. Get the latest raw frame from the camera thread
+                raw_frame = self.camera_manager._capture_frame()
 
-        # # Undistort the image
-        # undistorted = self.frame_processor._undistort_frame(raw_frame)
+                # 2. Process the frame (scaling, etc.)
+                processed_frame = self.frame_processor._scale_frame(raw_frame)
 
-        # Scale and correct orientation
-        # procesqsed_frame = self.frame_processor._process_frame(raw_frame)
+                # --- 3. Perform all detections on the same, consistent frame ---
+                disk_data = self.object_detector._detect_disk(processed_frame)
+                disk_center, disk_radius = disk_data
 
-        return raw_frame
+                robot_data = self.object_detector._detect_robot(
+                    processed_frame, disk_center, disk_radius
+                )
 
-    def _restart_camera_manager(self):
+                robot_contour = robot_data[2] if robot_data else None
+
+                # To get pixel data for visualization, we need to get contours first
+                rock_mask = self.object_detector._create_rock_mask(
+                    processed_frame, disk_center, disk_radius
+                )
+                rock_contours, _ = cv.findContours(
+                    rock_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
+                )
+                pixel_rocks = (
+                    self.object_detector._filter_and_get_rocks_from_contours(
+                        rock_contours, robot_contour
+                    )
+                )
+
+                # Convert pixel data to polar for the results dictionary
+                polar_rocks = self.object_detector._detect_rocks(
+                    processed_frame, disk_center, disk_radius, robot_contour
+                )
+
+                # --- 4. Visualize all detections ---
+                vis_frame = processed_frame.copy()
+                vis_frame = self.visualizer._visualize_disk(
+                    vis_frame, disk_center, disk_radius
+                )
+                if robot_data:
+                    vis_frame = self.visualizer._visualize_robot(
+                        vis_frame, robot_data[0], robot_data[1], robot_data[2]
+                    )
+                if pixel_rocks:
+                    vis_frame = self.visualizer._visualize_rocks(
+                        vis_frame, pixel_rocks
+                    )
+
+                # --- 5. Atomically update the shared results ---
+                with self._processing_lock:
+                    self.latest_processed_frame = vis_frame
+                    self.latest_detection_results = {
+                        "disk": disk_data,
+                        "robot": robot_data,
+                        "rocks": polar_rocks,
+                    }
+
+            except VisionDetectionError as e:
+                # If a core object isn't found, show an error on the screen.
+                with self._processing_lock:
+                    try:
+                        # Grab a raw frame just to have something to draw on
+                        raw_frame = self.camera_manager._capture_frame()
+                        error_frame = self.frame_processor._scale_frame(
+                            raw_frame
+                        )
+                        cv.putText(
+                            error_frame,
+                            str(e),
+                            (20, 50),
+                            cv.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 0, 255),
+                            2,
+                        )
+                        self.latest_processed_frame = error_frame
+                        self.latest_detection_results = {}  # Clear results
+                    except VisionConnectionError:
+                        pass  # Can't get a frame, do nothing
+
+            except VisionConnectionError:
+                # If the camera stream stops, just wait for it to come back.
+                time.sleep(0.5)
+
+            # A brief sleep to yield CPU time, preventing 100% usage if processing is very fast.
+            time.sleep(0.01)
+
+    def get_latest_output(self) -> Tuple[Optional[np.ndarray], dict]:
         """
         TODO
         """
 
-        print("Restarting main threaded camera stream...")
+        # Acquire the lock. The code inside this 'with' block is now
+        # protected. No other thread can enter a
+        # 'with self._processing_lock:' block until this one is done.
+        with self._processing_lock:
+            # Check if the processing thread has produced its first
+            # frame yet.
+            if self.latest_processed_frame is not None:
+                # If it has, make a copy. We copy it so that once we
+                # release the lock, the processing thread can't change
+                # the frame we're holding.
+                frame_to_return = self.latest_processed_frame.copy()
+            else:
+                # If no frame has been processed yet (e.g., at startup),
+                # we'll return None for the frame.
+                frame_to_return = None
+
+            # Make a copy of the results dictionary for the same reason.
+            # This prevents the processing thread from modifying the
+            # dictionary while the main thread is trying to use it.
+            results_to_return = self.latest_detection_results.copy()
+
+        # The 'with' block has ended, so the lock is automatically
+        # released. Other threads can now acquire the lock.
+
+        # Return the copies we made.
+        return frame_to_return, results_to_return
+
+    def _restart_all_threads(self):
+        """
+        TODO
+        """
+
+        print("Restarting all background threads...")
         try:
             self.camera_manager = ThreadingCameraManager(self.camera_index)
-            print("Main stream restarted successfully.")
+            self.processing_stopped = False
+            self.processing_thread = threading.Thread(
+                target=self._processing_loop
+            )
+            self.processing_thread.daemon = True
+            self.processing_thread.start()
+            print("All threads restarted successfully.")
         except VisionConnectionError as e:
-            raise (f"FATAL: Failed to restart camera manager: {e}") from e
+            raise VisionConnectionError(
+                f"FATAL: Failed to restart threads: {e}"
+            ) from e
 
     def set_camera_settings(self) -> None:
         """
@@ -1382,6 +1522,10 @@ class Vision:
 
         print("\n--- Entering Camera Settings Mode 'q' to Exit ---")
         print("Stopping main threaded stream to access hardware settings...")
+
+        self.processing_stopped = True
+        if self.processing_thread is not None:
+            self.processing_thread.join()
 
         # Stop and clean up the current (fast) camera manager
         self.camera_manager._cleanup()
@@ -1434,7 +1578,7 @@ class Vision:
         print("--- Exiting Camera Settings Mode ---")
 
         # Restart the main threaded camera manager with the fast backend
-        self._restart_camera_manager()
+        self._restart_all_threads()
 
     def dump_calibration_data(self) -> None:
         """
@@ -1443,118 +1587,31 @@ class Vision:
 
         self.calibration_manager.dump_calibration_data()
 
-    def detect_disk(
-        self, visualize: bool = False
-    ) -> Tuple[Tuple[int, int], int]:
+    def detect_disk(self):
         """
         TODO
         """
 
-        processed_frame = self._get_processed_frame()
+        with self._processing_lock:
+            return self.latest_detection_results.get("disk")
 
-        # Perform detection on the processed frame
-        center_px, radius_px = self.object_detector._detect_disk(
-            processed_frame
-        )
-
-        # Handle visualization if requested
-        if visualize:
-            vis_frame = self.visualizer._visualize_disk(
-                processed_frame, center_px, radius_px
-            )
-            self.visualizer._display_frame("Disk Detection", vis_frame)
-
-        return center_px, radius_px
-
-    def detect_robot(
-        self, visualize: bool = False
-    ) -> Optional[Tuple[float, float]]:
+    def detect_robot(self):
         """
         TODO
         """
 
-        processed_frame = self._get_processed_frame()
+        with self._processing_lock:
+            return self.latest_detection_results.get("robot")
 
-        # If disk doesn't exist then we are stuffed.
-        try:
-            disk_center_px, disk_radius_px = self.object_detector._detect_disk(
-                processed_frame
-            )
-        except VisionDetectionError:
-            return None
-
-        robot_data = self.object_detector._detect_robot(
-            processed_frame, disk_center_px, disk_radius_px
-        )
-
-        if robot_data is None:
-            print("Robot head not detected.")
-            return None
-
-        polar_coords, centroid_px, body_contour = robot_data
-
-        if visualize:
-            vis_frame = self.visualizer._visualize_robot(
-                processed_frame, polar_coords, centroid_px, body_contour
-            )
-            self.visualizer._display_frame("Robot Detection", vis_frame)
-
-        # Return only the public-facing polar coordinates
-        return polar_coords
-
-    def detect_rocks(
-        self, visualize: bool = False
-    ) -> Optional[List[Tuple[Tuple[float, float], float, float]]]:
+    def detect_rocks(self):
         """
         TODO
         """
 
-        processed_frame = self._get_processed_frame()
+        with self._processing_lock:
+            return self.latest_detection_results.get("rocks")
 
-        # Detect disk (mandatory dependency)
-        disk_center_px, disk_radius_px = self.object_detector._detect_disk(
-            processed_frame
-        )
-
-        # Detect robot (optional dependency, can be None)
-        robot_data = self.object_detector._detect_robot(
-            processed_frame, disk_center_px, disk_radius_px
-        )
-
-        robot_contour = robot_data[2] if robot_data else None
-
-        # Perform rock detection
-        polar_rocks = self.object_detector._detect_rocks(
-            processed_frame, disk_center_px, disk_radius_px, robot_contour
-        )
-
-        if not polar_rocks:
-            return None
-
-        # Handle visualization if requested
-        if visualize:
-            # For visualization, we need the pixel data, not polar.
-            contours, _ = cv.findContours(
-                self.object_detector._create_rock_mask(
-                    processed_frame, disk_center_px, disk_radius_px
-                ),
-                cv.RETR_EXTERNAL,
-                cv.CHAIN_APPROX_SIMPLE,
-            )
-            pixel_rocks = (
-                self.object_detector._filter_and_get_rocks_from_contours(
-                    contours, robot_contour
-                )
-            )
-            if pixel_rocks:
-                vis_frame = self.visualizer._visualize_rocks(
-                    processed_frame, pixel_rocks
-                )
-                self.visualizer._display_frame("Rock Detection", vis_frame)
-
-        return polar_rocks
-
-    def detect_workspace():
+    def detect_workspace(self):
         pass
 
 
@@ -1638,18 +1695,32 @@ if __name__ == "__main__":
         # vis.dump_calibration_data()
         # print(vis)
 
-        print("\nStarting lag test. Press 'q' to quit.")
+        print(
+            "\nStarting lag-free test with background processing. Press 'q' to quit."
+        )
+
+        # This is the CORRECT, fast main UI loop
         while True:
-            try:
-                frame = vis._get_processed_frame()
-                cv.imshow("Lag Test", frame)
+            # 1. Get the latest pre-computed frame. This is INSTANT.
+            frame, results = vis.get_latest_output()
 
-                # Simulate heavy work taking 0.5 seconds
-                print("Main loop is 'busy'...")
+            # 2. Check if the processing thread has produced a frame yet
+            if frame is None:
+                print("Waiting for first processed frame...")
+                time.sleep(0.5)
+                continue
 
-            except VisionError as e:
-                print(f"Error during preview: {e}")
+            # 3. Display the frame. This is FAST.
+            cv.imshow("Fully Processed Realtime Feed", frame)
 
+            # Optional: You can use the pre-computed results here for logic
+            # without causing any lag.
+            # if results.get("robot"):
+            #     print("Robot detected!")
+
+            # 4. Handle user input. This is FAST.
             if cv.waitKey(1) & 0xFF == ord("q"):
                 break
-        cv.destroyAllWindows()
+
+    cv.destroyAllWindows()
+    print("Program finished cleanly.")
