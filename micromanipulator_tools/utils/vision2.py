@@ -13,7 +13,6 @@
 
 import os
 import glob
-import time
 import threading
 import cv2 as cv
 import numpy as np
@@ -1367,7 +1366,6 @@ class Vision:
             frame_scale_factor or VisionBase.DEFAULT_FRAME_SCALE_FACTOR
         )
 
-        # self.camera_manager = CameraManager(camera_index)
         self.camera_manager = ThreadingCameraManager(camera_index)
         self.calibration_manager = CalibrationManager(calibration_debug)
         self.frame_processor = FrameProcessor(
@@ -1663,23 +1661,23 @@ if __name__ == "__main__":
         # vis.detect_robot(True)
         # vis.detect_rocks(True)
         # vis.detect_workspace(True)
-        # vis.set_camera_settings()
+        vis.set_camera_settings()
         # vis.dump_calibration_data()
         # print(vis)
 
-        print("\nStarting lag test. Press 'q' to quit.")
-        while True:
-            try:
-                frame = vis._get_processed_frame()
-                cv.imshow("Lag Test", frame)
+        # print("\nStarting lag test. Press 'q' to quit.")
+        # while True:
+        #     try:
+        #         frame = vis._get_processed_frame()
+        #         cv.imshow("Lag Test", frame)
 
-                # Simulate heavy work taking 0.5 seconds
-                print("Main loop is 'busy'...")
+        #         # Simulate heavy work taking 0.5 seconds
+        #         print("Main loop is 'busy'...")
 
-            except VisionError as e:
-                print(f"Error during preview: {e}")
-                time.sleep(1)  # Wait a bit before retrying
+        #     except VisionError as e:
+        #         print(f"Error during preview: {e}")
+        #         time.sleep(1)  # Wait a bit before retrying
 
-            if cv.waitKey(1) & 0xFF == ord("q"):
-                break
-        cv.destroyAllWindows()
+        #     if cv.waitKey(1) & 0xFF == ord("q"):
+        #         break
+        # cv.destroyAllWindows()
