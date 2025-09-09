@@ -10,7 +10,7 @@
 # TODO maybe do the visualize orientation line.
 # TODO put text on the visualizations.
 # TODO correct the angle for the robot.
-# TODO make circle not move around
+# TODO make the orientation correction work for different scale factors
 
 import os
 import glob
@@ -118,6 +118,9 @@ class VisionBase:
     ROBOT_HEAD_HSV_UPPER_THRESHOLD = (80, 255, 255)
     ROBOT_HEAD_MIN_AREA = 500
     ROBOT_HEAD_APPROX_EPSILON = 0.02
+
+    ROBOT_TWEEZER_HEIGHT_FACTOR = 1.15
+    ROBOT_TWEEZER_BASE_WIDTH_FACTOR = 0.5
 
     # Rock detection (dark objects on light background)
     ROCK_GRAY_UPPER_THRESHOLD = 100
@@ -864,8 +867,10 @@ class ObjectDetector(VisionBase):
         # Generate the full body contour for visualization
         head_rect = cv.minAreaRect(head_contour)
         link_rect = self._find_prismatic_link_rect(head_rect)
+        tweezer_points = self._get_tweezer_triangle_points(head_rect)
+
         body_contour = self._get_robot_body_contour(
-            frame.shape, head_rect, link_rect
+            frame.shape, head_rect, link_rect, tweezer_points
         )
 
         # Convert the head's centroid to polar coordinates
@@ -981,6 +986,47 @@ class ObjectDetector(VisionBase):
         # Return the contour with the largest area
         return max(valid_contours, key=lambda x: x[1])[0]
 
+    def _get_tweezer_triangle_points(self, head_rect: Tuple) -> np.ndarray:
+        """
+        TODO
+        """
+        head_center, (head_width, head_height), head_angle_deg = head_rect
+
+        # Standardize the angle from minAreaRect to a predictable 0-360
+        # range.
+        if head_width < head_height:
+            # If width is less than height, OpenCV's angle is along the
+            # longer side. We want the angle of the shorter side
+            # (the top/bottom).
+            head_angle_deg += 90
+
+        # Define tweezer geometry based on head size and constants
+        tweezer_tip_height = head_height * self.ROBOT_TWEEZER_HEIGHT_FACTOR
+        tweezer_base_width = head_width * self.ROBOT_TWEEZER_BASE_WIDTH_FACTOR
+
+        # Define the triangle's points in a local, unrotated coordinate
+        # system centered on the head, where +Y is down.
+        # The base is on the "top" edge of the head's bounding box.
+        # The tip is further "up" (negative Y).
+        local_p_base_left = (-tweezer_base_width / 2, -head_height / 2)
+        local_p_base_right = (tweezer_base_width / 2, -head_height / 2)
+        local_p_tip = (0, -head_height / 2 - tweezer_tip_height)
+
+        local_points = np.array(
+            [local_p_base_left, local_p_base_right, local_p_tip]
+        )
+
+        # Create the 2D rotation matrix
+        angle_rad = np.radians(head_angle_deg)
+        c, s = np.cos(angle_rad), np.sin(angle_rad)
+        rotation_matrix = np.array(((c, -s), (s, c)))
+
+        # Rotate the local points and then translate them to the head's
+        # center
+        world_points = (rotation_matrix @ local_points.T).T + head_center
+
+        return np.int32(world_points)
+
     def _get_contour_centroid(
         self, contour: np.ndarray
     ) -> Optional[Tuple[int, int]]:
@@ -1029,7 +1075,11 @@ class ObjectDetector(VisionBase):
         return (link_center, (link_width, link_length), head_angle_deg)
 
     def _get_robot_body_contour(
-        self, frame_shape: Tuple, head_rect: Tuple, link_rect: Tuple
+        self,
+        frame_shape: Tuple,
+        head_rect: Tuple,
+        link_rect: Tuple,
+        tweezer_points: np.ndarray,
     ) -> np.ndarray:
         """
         TODO
@@ -1042,6 +1092,7 @@ class ObjectDetector(VisionBase):
         mask = np.zeros(frame_shape[:2], dtype=np.uint8)
         cv.fillPoly(mask, [head_points], 255)
         cv.fillPoly(mask, [link_points], 255)
+        cv.fillPoly(mask, [tweezer_points], 255)
 
         # Find the single external contour of the combined shape
         contours, _ = cv.findContours(
@@ -1049,6 +1100,7 @@ class ObjectDetector(VisionBase):
         )
         return max(contours, key=cv.contourArea)
 
+    # TODO fix maybe?
     def _convert_cartesian_to_polar(
         self,
         disk_center_px: Tuple[int, int],
@@ -1079,8 +1131,6 @@ class ObjectDetector(VisionBase):
 
         angle_rad = np.arctan2(point_new_y_px, point_new_x_px)
         angle_deg = np.degrees(angle_rad)
-
-        print(f"disk_radius_px, {disk_radius_px}")
 
         # Convert to robot's coordinate system (0 deg is up)
         robot_angle_deg = angle_deg - 90
@@ -1412,6 +1462,26 @@ class Vision(VisionBase):
             f"current_focus={focus_level})"
         )
 
+    def _restart_all_threads(self):
+        """
+        TODO
+        """
+
+        print("Restarting all background threads...")
+        try:
+            self.camera_manager = ThreadingCameraManager(self.camera_index)
+            self.processing_stopped = False
+            self.processing_thread = threading.Thread(
+                target=self._processing_loop
+            )
+            self.processing_thread.daemon = True
+            self.processing_thread.start()
+            print("All threads restarted successfully.")
+        except VisionConnectionError as e:
+            raise VisionConnectionError(
+                f"FATAL: Failed to restart threads: {e}"
+            ) from e
+
     def _perform_startup_calibration(self):
         """
         TODO
@@ -1420,7 +1490,6 @@ class Vision(VisionBase):
         print(
             "Vision: Performing startup calibration for stable world frame..."
         )
-        time.sleep(1.5)  # Allow camera exposure to settle
 
         centers_x, centers_y, radii, angles = [], [], [], []
 
@@ -1565,57 +1634,7 @@ class Vision(VisionBase):
                 time.sleep(0.5)
                 pass
 
-    def get_latest_output(self) -> Tuple[Optional[np.ndarray], dict]:
-        """
-        TODO
-        """
-
-        # Acquire the lock. The code inside this 'with' block is now
-        # protected. No other thread can enter a
-        # 'with self._processing_lock:' block until this one is done.
-        with self._processing_lock:
-            # Check if the processing thread has produced its first
-            # frame yet.
-            if self.latest_processed_frame is not None:
-                # If it has, make a copy. We copy it so that once we
-                # release the lock, the processing thread can't change
-                # the frame we're holding.
-                frame_to_return = self.latest_processed_frame.copy()
-            else:
-                # If no frame has been processed yet (e.g., at startup),
-                # we'll return None for the frame.
-                frame_to_return = None
-
-            # Make a copy of the results dictionary for the same reason.
-            # This prevents the processing thread from modifying the
-            # dictionary while the main thread is trying to use it.
-            results_to_return = self.latest_detection_results.copy()
-
-        # The 'with' block has ended, so the lock is automatically
-        # released. Other threads can now acquire the lock.
-
-        # Return the copies we made.
-        return frame_to_return, results_to_return
-
-    def _restart_all_threads(self):
-        """
-        TODO
-        """
-
-        print("Restarting all background threads...")
-        try:
-            self.camera_manager = ThreadingCameraManager(self.camera_index)
-            self.processing_stopped = False
-            self.processing_thread = threading.Thread(
-                target=self._processing_loop
-            )
-            self.processing_thread.daemon = True
-            self.processing_thread.start()
-            print("All threads restarted successfully.")
-        except VisionConnectionError as e:
-            raise VisionConnectionError(
-                f"FATAL: Failed to restart threads: {e}"
-            ) from e
+    # Public Interface --------------------------------------------------------
 
     def set_camera_settings(self) -> None:
         """
@@ -1716,6 +1735,38 @@ class Vision(VisionBase):
     def detect_workspace(self):
         pass
 
+    def get_latest_output(self) -> Tuple[Optional[np.ndarray], dict]:
+        """
+        TODO
+        """
+
+        # Acquire the lock. The code inside this 'with' block is now
+        # protected. No other thread can enter a
+        # 'with self._processing_lock:' block until this one is done.
+        with self._processing_lock:
+            # Check if the processing thread has produced its first
+            # frame yet.
+            if self.latest_processed_frame is not None:
+                # If it has, make a copy. We copy it so that once we
+                # release the lock, the processing thread can't change
+                # the frame we're holding.
+                frame_to_return = self.latest_processed_frame.copy()
+            else:
+                # If no frame has been processed yet (e.g., at startup),
+                # we'll return None for the frame.
+                frame_to_return = None
+
+            # Make a copy of the results dictionary for the same reason.
+            # This prevents the processing thread from modifying the
+            # dictionary while the main thread is trying to use it.
+            results_to_return = self.latest_detection_results.copy()
+
+        # The 'with' block has ended, so the lock is automatically
+        # released. Other threads can now acquire the lock.
+
+        # Return the copies we made.
+        return frame_to_return, results_to_return
+
 
 # -------------------------------------------------------------------------
 # Exception Classes
@@ -1788,7 +1839,7 @@ class VisionDetectionError(VisionError):
 
 
 if __name__ == "__main__":
-    with Vision(frame_scale_factor=0.6, calibration_debug=False) as vis:
+    with Vision(frame_scale_factor=0.8, calibration_debug=False) as vis:
         # vis.detect_disk(True)
         # vis.detect_robot(True)
         # vis.detect_rocks(True)
