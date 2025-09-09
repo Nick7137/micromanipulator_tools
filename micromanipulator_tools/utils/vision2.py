@@ -204,67 +204,6 @@ class VisionBase:
         cv.destroyAllWindows()
 
 
-class CameraManager(VisionBase):
-    """
-    TODO
-    """
-
-    def __init__(self, camera_index: int = None) -> None:
-        """
-        Initialize camera manager and connect to camera.
-        """
-
-        self._camera_index = camera_index or self.DEFAULT_CAMERA_CHANNEL
-        self._initialize_camera()
-
-    def _initialize_camera(self) -> None:
-        """
-        Initialize camera connection and set the frame dimensions.
-        """
-
-        self._camera = cv.VideoCapture(self._camera_index + cv.CAP_DSHOW)
-
-        if not self._camera.isOpened():
-            raise VisionConnectionError(
-                f"Failed to open camera {self._camera_index}"
-            )
-
-        # Set highest resolution
-        self._camera.set(cv.CAP_PROP_FRAME_WIDTH, self.DEFAULT_CAMERA_WIDTH)
-        self._camera.set(cv.CAP_PROP_FRAME_HEIGHT, self.DEFAULT_CAMERA_HEIGHT)
-
-        # Disable autofocus and set manual focus.
-        self._camera.set(cv.CAP_PROP_AUTOFOCUS, 0)
-        self._camera.set(cv.CAP_PROP_FOCUS, self.DEFAULT_FOCUS_LEVEL)
-
-        for i in range(self.NUM_INIT_FRAMES):
-            self._capture_frame()
-
-    def _capture_frame(self) -> np.ndarray:
-        """
-        Capture a single frame from camera.
-        """
-        ret, frame = self._camera.read()
-        if not ret:
-            raise VisionConnectionError(
-                f"Failed to capture frame from camera {self._camera_index}"
-            )
-        return frame
-
-    def _cleanup(self) -> None:
-        """
-        Release camera resources.
-        """
-        self._camera.release()
-
-    def _open_settings_dialog(self) -> None:
-        """
-        TODO
-        """
-
-        self._camera.set(cv.CAP_PROP_SETTINGS, 1)
-
-
 class ThreadingCameraManager(VisionBase):
     """
     TODO
@@ -1460,6 +1399,13 @@ class Vision:
             return
 
         try:
+            settings_cam.set(
+                cv.CAP_PROP_FRAME_WIDTH, VisionBase.DEFAULT_CAMERA_WIDTH
+            )
+            settings_cam.set(
+                cv.CAP_PROP_FRAME_HEIGHT, VisionBase.DEFAULT_CAMERA_HEIGHT
+            )
+
             # Open the settings dialog.
             settings_cam.set(cv.CAP_PROP_SETTINGS, 1)
 
@@ -1471,8 +1417,10 @@ class Vision:
                     print("Warning: Lost connection to settings camera.")
                     break
 
+                scaled = self.frame_processor._scale_frame(frame)
+
                 # Show a preview with a clear title
-                cv.imshow("Camera Settings Preview (DSHOW)", frame)
+                cv.imshow("Camera Settings Preview (DSHOW)", scaled)
 
                 # Wait for 'q' to be pressed to close the preview
                 if cv.waitKey(1) & 0xFF == ord("q"):
