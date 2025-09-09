@@ -268,119 +268,140 @@ class CameraManager(VisionBase):
 
 class ThreadingCameraManager(VisionBase):
     """
-    Manages a camera connection using a dedicated background thread.
-
-    This provides a non-blocking, real-time camera feed by continuously
-    reading frames in the background. The main application can then request
-    the most recent frame at any time without waiting for the camera hardware,
-    which prevents input lag and significantly speeds up startup time.
+    TODO
     """
 
     def __init__(self, camera_index: int = None):
         """
-        Initializes and starts the threaded camera stream.
-
-        Args:
-            camera_index (int, optional): The index of the camera to use.
-                                          Defaults to DEFAULT_CAMERA_CHANNEL.
+        TODO
         """
-        self._camera_index = camera_index or self.DEFAULT_CAMERA_CHANNEL
 
-        # --- Threading-specific attributes ---
-        self.frame: Optional[np.ndarray] = None
-        self.grabbed: bool = False
-        self.stopped: bool = False
+        self._camera_index = camera_index or self.DEFAULT_CAMERA_CHANNEL
+        self.stopped = False
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
-        # -------------------------------------
 
-        # Initialize the camera hardware and start the reading thread
-        self._camera = cv.VideoCapture(self._camera_index + cv.CAP_DSHOW)
+        # Open the video stream using the default (fast) backend.
+        self._camera = cv.VideoCapture(self._camera_index)
+
         if not self._camera.isOpened():
             raise VisionConnectionError(
-                f"Failed to open camera {self._camera_index}"
+                "ThreadingCameraManager: Failed to open camera "
+                f"{self._camera_index}."
             )
 
-        # Set hardware properties before starting the thread
+        # Configure camera properties
         self._configure_camera_properties()
 
-        # Start the background thread for reading frames
-        self._start_thread()
+        # Perform an initial, blocking read to populate the first frame.
+        # This is CRITICAL to prevent race conditions and startup
+        # crashes.
+        self.grabbed, self.frame = self._camera.read()
+        if not self.grabbed:
+            self._camera.release()  # Clean up before raising the error
+            raise VisionConnectionError(
+                "ThreadingCameraManager: Failed to grab initial frame from "
+                f"camera {self._camera_index}."
+            )
 
-        # Brief pause to allow the thread to capture the first frame
-        time.sleep(0.5)
+        # Start the background thread to continuously update the frame.
+        self._start_thread()
+        print("ThreadingCameraManager started successfully with fast backend.")
 
     def _configure_camera_properties(self):
-        """Sets the desired hardware properties for the camera."""
+        """
+        TODO
+        """
+
         self._camera.set(cv.CAP_PROP_FRAME_WIDTH, self.DEFAULT_CAMERA_WIDTH)
         self._camera.set(cv.CAP_PROP_FRAME_HEIGHT, self.DEFAULT_CAMERA_HEIGHT)
         self._camera.set(cv.CAP_PROP_AUTOFOCUS, 0)
         self._camera.set(cv.CAP_PROP_FOCUS, self.DEFAULT_FOCUS_LEVEL)
 
+        # Good Practice: Verify the resolution was set correctly.
+        actual_width = self._camera.get(cv.CAP_PROP_FRAME_WIDTH)
+        actual_height = self._camera.get(cv.CAP_PROP_FRAME_HEIGHT)
+        print(
+            f"Attempted to set {self.DEFAULT_CAMERA_WIDTH}x"
+            f"{self.DEFAULT_CAMERA_HEIGHT}. "
+            f"Actual resolution: {int(actual_width)}x{int(actual_height)}"
+        )
+
     def _start_thread(self):
-        """Creates and starts the background frame-reading thread."""
+        """
+        TODO
+        """
+
         self._thread = threading.Thread(target=self._update, args=())
         self._thread.daemon = True
         self._thread.start()
 
     def _update(self):
         """
-        The main loop for the background thread.
-
-        Continuously reads frames from the camera and stores the latest one.
-        This method is run by the background thread and should not be
-        called directly.
+        TODO
         """
-        while not self.stopped:
-            grabbed, frame = self._camera.read()
 
+        while not self.stopped:
+            # Read the next frame from the stream
+            (grabbed, frame) = self._camera.read()
+
+            # If the frame could not be grabbed (e.g., camera
+            # disconnected), signal the thread to stop.
+            if not grabbed:
+                self.stopped = True
+                continue
+
+            # Use a lock to ensure thread-safe assignment of the new
+            # frame
             with self._lock:
                 self.grabbed = grabbed
                 self.frame = frame
 
-        # Once the loop is stopped, release the camera hardware
+        # Release the camera resource once the loop has exited
         self._camera.release()
+        print("Camera hardware has been released.")
 
     def _capture_frame(self) -> np.ndarray:
         """
-        Captures a single frame from the camera stream.
-
-        Returns the most recently read frame from the background thread,
-        making it a non-blocking, real-time operation.
-
-        Returns:
-            np.ndarray: The latest camera frame.
-
-        Raises:
-            VisionConnectionError: If no frame could be captured or the
-                                   stream is stopped.
+        TODO
         """
+
         with self._lock:
+            # Check if the stream is running and a frame is available
             if not self.grabbed or self.frame is None:
                 raise VisionConnectionError(
-                    f"Failed to capture frame from camera {self._camera_index}. "
-                    "The stream may have been stopped or disconnected."
+                    "ThreadingCameraManager: No frame available. "
+                    "The stream may be stopped."
                 )
-            # Return a copy to prevent race conditions if the caller modifies it
+
+            # Return a copy to prevent race conditions if the main
+            # thread modifies the frame
             frame_copy = self.frame.copy()
 
         return frame_copy
 
     def _cleanup(self):
         """
-        Stops the background thread and releases camera resources.
+        TODO
         """
-        # print("Stopping camera thread...") # Optional: for debugging
+
+        if self.stopped:
+            return
+
+        print("Stopping camera thread...")
         self.stopped = True
-        # Wait for the thread to finish its work (including releasing the camera)
+
+        # Wait for the thread to finish its work (which includes
+        # releasing the camera)
         if self._thread is not None:
             self._thread.join()
-        # print("Camera thread stopped.") # Optional: for debugging
+        print("Camera thread stopped and cleaned up.")
 
     def _open_settings_dialog(self):
         """
-        Opens the camera's built-in settings dialog.
+        TODO
         """
+
         self._camera.set(cv.CAP_PROP_SETTINGS, 1)
 
 
@@ -1401,9 +1422,9 @@ class Vision:
         # undistorted = self.frame_processor._undistort_frame(raw_frame)
 
         # Scale and correct orientation
-        processed_frame = self.frame_processor._process_frame(raw_frame)
+        # procesqsed_frame = self.frame_processor._process_frame(raw_frame)
 
-        return processed_frame
+        return raw_frame
 
     def dump_calibration_data(self) -> None:
         """
@@ -1642,6 +1663,23 @@ if __name__ == "__main__":
         # vis.detect_robot(True)
         # vis.detect_rocks(True)
         # vis.detect_workspace(True)
-        vis.set_camera_settings()
+        # vis.set_camera_settings()
         # vis.dump_calibration_data()
         # print(vis)
+
+        print("\nStarting lag test. Press 'q' to quit.")
+        while True:
+            try:
+                frame = vis._get_processed_frame()
+                cv.imshow("Lag Test", frame)
+
+                # Simulate heavy work taking 0.5 seconds
+                print("Main loop is 'busy'...")
+
+            except VisionError as e:
+                print(f"Error during preview: {e}")
+                time.sleep(1)  # Wait a bit before retrying
+
+            if cv.waitKey(1) & 0xFF == ord("q"):
+                break
+        cv.destroyAllWindows()
