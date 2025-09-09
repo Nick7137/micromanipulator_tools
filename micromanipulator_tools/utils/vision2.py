@@ -9,9 +9,12 @@
 # TODO input output of each method.
 # TODO maybe do the visualize orientation line.
 # TODO put text on the visualizations.
+# TODO correct the angle for the robot.
 
 import os
 import glob
+import time
+import threading
 import cv2 as cv
 import numpy as np
 from typing import Optional, Tuple, List
@@ -54,8 +57,8 @@ class VisionBase:
     # -------------------------------------------------------------------------
 
     # Robot workspace measurements (in mm)
-    BASE_TO_DISK_CENTER = 76.4
-    DISK_RADIUS = 74.5
+    BASE_TO_DISK_CENTER_MM = 76.4
+    DISK_RADIUS_MM = 74.5
 
     # -------------------------------------------------------------------------
     # Camera Configuration Constants
@@ -134,6 +137,9 @@ class VisionBase:
     MAGENTA = (255, 0, 255)
     WHITE = (255, 255, 255)
     BLACK = (0, 0, 0)
+
+    TEXT_SIZE = 0.6
+    TEXT_THICKNESS = 1
 
     # -------------------------------------------------------------------------
     # File Path Management
@@ -257,6 +263,124 @@ class CameraManager(VisionBase):
         TODO
         """
 
+        self._camera.set(cv.CAP_PROP_SETTINGS, 1)
+
+
+class ThreadingCameraManager(VisionBase):
+    """
+    Manages a camera connection using a dedicated background thread.
+
+    This provides a non-blocking, real-time camera feed by continuously
+    reading frames in the background. The main application can then request
+    the most recent frame at any time without waiting for the camera hardware,
+    which prevents input lag and significantly speeds up startup time.
+    """
+
+    def __init__(self, camera_index: int = None):
+        """
+        Initializes and starts the threaded camera stream.
+
+        Args:
+            camera_index (int, optional): The index of the camera to use.
+                                          Defaults to DEFAULT_CAMERA_CHANNEL.
+        """
+        self._camera_index = camera_index or self.DEFAULT_CAMERA_CHANNEL
+
+        # --- Threading-specific attributes ---
+        self.frame: Optional[np.ndarray] = None
+        self.grabbed: bool = False
+        self.stopped: bool = False
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        # -------------------------------------
+
+        # Initialize the camera hardware and start the reading thread
+        self._camera = cv.VideoCapture(self._camera_index + cv.CAP_DSHOW)
+        if not self._camera.isOpened():
+            raise VisionConnectionError(
+                f"Failed to open camera {self._camera_index}"
+            )
+
+        # Set hardware properties before starting the thread
+        self._configure_camera_properties()
+
+        # Start the background thread for reading frames
+        self._start_thread()
+
+        # Brief pause to allow the thread to capture the first frame
+        time.sleep(0.5)
+
+    def _configure_camera_properties(self):
+        """Sets the desired hardware properties for the camera."""
+        self._camera.set(cv.CAP_PROP_FRAME_WIDTH, self.DEFAULT_CAMERA_WIDTH)
+        self._camera.set(cv.CAP_PROP_FRAME_HEIGHT, self.DEFAULT_CAMERA_HEIGHT)
+        self._camera.set(cv.CAP_PROP_AUTOFOCUS, 0)
+        self._camera.set(cv.CAP_PROP_FOCUS, self.DEFAULT_FOCUS_LEVEL)
+
+    def _start_thread(self):
+        """Creates and starts the background frame-reading thread."""
+        self._thread = threading.Thread(target=self._update, args=())
+        self._thread.daemon = True
+        self._thread.start()
+
+    def _update(self):
+        """
+        The main loop for the background thread.
+
+        Continuously reads frames from the camera and stores the latest one.
+        This method is run by the background thread and should not be
+        called directly.
+        """
+        while not self.stopped:
+            grabbed, frame = self._camera.read()
+
+            with self._lock:
+                self.grabbed = grabbed
+                self.frame = frame
+
+        # Once the loop is stopped, release the camera hardware
+        self._camera.release()
+
+    def _capture_frame(self) -> np.ndarray:
+        """
+        Captures a single frame from the camera stream.
+
+        Returns the most recently read frame from the background thread,
+        making it a non-blocking, real-time operation.
+
+        Returns:
+            np.ndarray: The latest camera frame.
+
+        Raises:
+            VisionConnectionError: If no frame could be captured or the
+                                   stream is stopped.
+        """
+        with self._lock:
+            if not self.grabbed or self.frame is None:
+                raise VisionConnectionError(
+                    f"Failed to capture frame from camera {self._camera_index}. "
+                    "The stream may have been stopped or disconnected."
+                )
+            # Return a copy to prevent race conditions if the caller modifies it
+            frame_copy = self.frame.copy()
+
+        return frame_copy
+
+    def _cleanup(self):
+        """
+        Stops the background thread and releases camera resources.
+        """
+        # print("Stopping camera thread...") # Optional: for debugging
+        self.stopped = True
+        # Wait for the thread to finish its work (including releasing the camera)
+        if self._thread is not None:
+            self._thread.join()
+        # print("Camera thread stopped.") # Optional: for debugging
+
+    def _open_settings_dialog(self):
+        """
+        Opens the camera's built-in settings dialog.
+        """
         self._camera.set(cv.CAP_PROP_SETTINGS, 1)
 
 
@@ -939,26 +1063,35 @@ class ObjectDetector(VisionBase):
         point_px: Tuple[int, int],
     ) -> Tuple[float, float]:
         """
-        TODO
+        TODO converts pixel coords to polar coords in the frame of the
+        robot
         """
 
-        disk_to_origin_scaling = self.BASE_TO_DISK_CENTER / self.DISK_RADIUS
-        origin_x = disk_center_px[0]
-        origin_y = disk_center_px[1] + disk_radius_px * disk_to_origin_scaling
+        scaling = self.BASE_TO_DISK_CENTER_MM / self.DISK_RADIUS_MM
 
-        # Calculate displacement from origin, note, we are also
-        # changing the coordinate system with these operations to make
-        # y point up from the origin and x point to the right.
-        delta_x = point_px[0] - origin_x
-        delta_y = origin_y - point_px[1]
+        # X coord is in the disk center.
+        origin_x_px = disk_center_px[0]
+        origin_y_px = disk_center_px[1] + disk_radius_px * scaling
 
-        radius = np.sqrt(delta_x**2 + delta_y**2)
-        angle_rad = np.arctan2(delta_y, delta_x)
+        # # Calculate displacement from origin, note, we are also
+        # # changing the coordinate system with these operations to make
+        # # y point up from the origin and x point to the right.
+
+        point_new_x_px = point_px[0] - origin_x_px
+        point_new_y_px = origin_y_px - point_px[1]
+
+        # Changing the frame to have the x axis pointing up and the y
+        # axis pointing to the left.
+        radius_px = np.sqrt(point_new_x_px**2 + point_new_y_px**2)
+
+        angle_rad = np.arctan2(point_new_y_px, point_new_x_px)
         angle_deg = np.degrees(angle_rad)
+
+        print(f"disk_radius_px, {disk_radius_px}")
 
         # Convert to robot's coordinate system (0 deg is up)
         robot_angle_deg = angle_deg - 90
-        return (radius, robot_angle_deg)
+        return (radius_px, robot_angle_deg)
 
     # _detect_rocks helper functions ------------------------------------------
 
@@ -1045,31 +1178,32 @@ class Visualizer(VisionBase):
         TODO
         """
 
-        visualization_frame = frame.copy()
+        vis_frame = frame.copy()
         # Draw the disk outline
-        cv.circle(visualization_frame, center, radius, self.CYAN, 2)
+        cv.circle(vis_frame, center, radius, self.CYAN, 2)
         # Draw the center point
-        cv.circle(visualization_frame, center, 4, self.RED, -1)
+        cv.circle(vis_frame, center, 4, self.RED, -1)
 
         # Add the text label
         label_pos = (center[0] - 30, center[1] - radius - 10)
 
         cv.putText(
-            visualization_frame,
+            vis_frame,
             f"Disk (r={radius}px)",
             label_pos,
             cv.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            self.TEXT_SIZE,
             self.CYAN,
-            1,
+            self.TEXT_THICKNESS,
         )
 
-        return visualization_frame
+        return vis_frame
 
     def _visualize_robot(
         self,
         frame: np.ndarray,
-        centroid: Tuple[int, int],
+        polar_coords: Tuple[float, float],
+        centroid_px: Tuple[int, int],
         contour: np.ndarray,
     ) -> np.ndarray:
         """
@@ -1077,10 +1211,29 @@ class Visualizer(VisionBase):
         """
 
         vis_frame = frame.copy()
-        # Draw the contour of the robot head
+
+        # Draw the contour of the robot body
         cv.drawContours(vis_frame, [contour], -1, self.GREEN, 2)
+
         # Draw the centroid
-        cv.circle(vis_frame, centroid, 4, self.RED, -1)
+        cv.circle(vis_frame, centroid_px, 4, self.RED, -1)
+
+        # Create the label text with the polar coordinates
+        radius, angle = polar_coords
+        label_text = "Robot"
+
+        # Position and draw the text label
+        label_pos = (centroid_px[0] + 10, centroid_px[1])
+        cv.putText(
+            vis_frame,
+            label_text,
+            label_pos,
+            cv.FONT_HERSHEY_SIMPLEX,
+            self.TEXT_SIZE,
+            self.RED,
+            self.TEXT_THICKNESS,
+        )
+
         return vis_frame
 
     def _visualize_rocks(
@@ -1091,14 +1244,83 @@ class Visualizer(VisionBase):
         """
         TODO
         """
-
         vis_frame = frame.copy()
-        for min_rect, centroid, area in rocks_data:
+
+        # Use enumerate to get an index 'i' for each rock
+        for i, (min_rect, centroid, area) in enumerate(rocks_data):
             # Draw the rotated bounding box
             box_points = np.int32(cv.boxPoints(min_rect))
             cv.drawContours(vis_frame, [box_points], 0, self.CYAN, 2)
+
             # Draw the centroid
             cv.circle(vis_frame, centroid, 3, self.RED, -1)
+
+            # Create and draw the unique label for each rock
+            label_text = f"R{i + 1}"
+            label_pos = (centroid[0], centroid[1] - 15)
+
+            cv.putText(
+                vis_frame,
+                label_text,
+                label_pos,
+                cv.FONT_HERSHEY_SIMPLEX,
+                self.TEXT_SIZE,
+                self.RED,
+                self.TEXT_THICKNESS,
+            )
+
+        return vis_frame
+
+    def _visualize_workspace_arc(
+        self,
+        frame: np.ndarray,
+        arc_center_px: Tuple[int, int],
+        arc_radius_px: int,
+        disk_center_px: Tuple[int, int],
+    ) -> np.ndarray:
+        """
+        TODO
+        """
+
+        vis_frame = frame.copy()
+
+        # Draw the operational arc/circle
+        cv.circle(vis_frame, arc_center_px, arc_radius_px, self.MAGENTA, 2)
+
+        # Draw the robot's base origin
+        cv.circle(vis_frame, arc_center_px, 8, self.YELLOW, -1)
+        cv.circle(vis_frame, arc_center_px, 8, self.BLACK, 2)
+
+        # Draw a line connecting the origin to the disk center to show the radius
+        cv.line(
+            vis_frame,
+            arc_center_px,
+            disk_center_px,
+            self.YELLOW,
+            2,
+            cv.LINE_AA,
+        )
+
+        # Add text labels for clarity
+        cv.putText(
+            vis_frame,
+            "Robot Origin",
+            (arc_center_px[0] + 15, arc_center_px[1]),
+            cv.FONT_HERSHEY_SIMPLEX,
+            self.TEXT_SIZE,
+            self.YELLOW,
+            self.TEXT_THICKNESS,
+        )
+        cv.putText(
+            vis_frame,
+            f"Arc (r={self.BASE_TO_DISK_CENTER_MM}mm)",
+            (disk_center_px[0], disk_center_px[1] - 15),
+            cv.FONT_HERSHEY_SIMPLEX,
+            self.TEXT_SIZE,
+            self.MAGENTA,
+            self.TEXT_THICKNESS,
+        )
+
         return vis_frame
 
 
@@ -1124,7 +1346,8 @@ class Vision:
             frame_scale_factor or VisionBase.DEFAULT_FRAME_SCALE_FACTOR
         )
 
-        self.camera_manager = CameraManager(camera_index)
+        # self.camera_manager = CameraManager(camera_index)
+        self.camera_manager = ThreadingCameraManager(camera_index)
         self.calibration_manager = CalibrationManager(calibration_debug)
         self.frame_processor = FrameProcessor(
             frame_scale_factor,
@@ -1174,6 +1397,9 @@ class Vision:
         # Capture a new frame
         raw_frame = self.camera_manager._capture_frame()
 
+        # # Undistort the image
+        # undistorted = self.frame_processor._undistort_frame(raw_frame)
+
         # Scale and correct orientation
         processed_frame = self.frame_processor._process_frame(raw_frame)
 
@@ -1220,7 +1446,7 @@ class Vision:
                 cv.imshow("Camera Settings Preview", error_frame)
 
             # This part remains the same
-            if cv.waitKey(20) & 0xFF == ord("q"):
+            if cv.waitKey(1) & 0xFF == ord("q"):
                 break
 
         cv.destroyAllWindows()
@@ -1277,7 +1503,7 @@ class Vision:
 
         if visualize:
             vis_frame = self.visualizer._visualize_robot(
-                processed_frame, centroid_px, body_contour
+                processed_frame, polar_coords, centroid_px, body_contour
             )
             self.visualizer._display_frame("Robot Detection", vis_frame)
 
@@ -1338,65 +1564,6 @@ class Vision:
 
     def detect_workspace():
         pass
-
-    # TODO FIX and make work with all
-    def visualize_detections(self) -> None:
-        """
-        Runs all detections on a single frame and displays a composite image.
-
-        This method provides a complete overview of what the vision system
-        is currently detecting. It handles detection failures gracefully by
-        simply not drawing the objects that weren't found.
-        """
-        print("Running all detections for visualization...")
-        processed_frame = self._get_processed_frame()
-
-        # --- Gather all detection data (gracefully) ---
-
-        # 1. Disk is mandatory. If it fails, we can't proceed.
-        try:
-            disk_center_px, disk_radius_px = self.object_detector._detect_disk(
-                processed_frame
-            )
-            disk_data_for_vis = (disk_center_px, disk_radius_px)
-        except VisionDetectionError as e:
-            print(f"Visualization failed: Cannot find the workspace disk. {e}")
-            self._display_frame("Detection Error", processed_frame)
-            return
-
-        # 2. Robot is optional. It might return None.
-        robot_data_for_vis = self.object_detector._detect_robot(
-            processed_frame, disk_center_px, disk_radius_px
-        )
-        robot_contour = robot_data_for_vis[2] if robot_data_for_vis else None
-
-        # 3. Rocks are optional.
-        # For visualization, we need the pixel-based rock data.
-        rock_contours, _ = cv.findContours(
-            self.object_detector._create_rock_mask(
-                processed_frame, disk_center_px, disk_radius_px
-            ),
-            cv.RETR_EXTERNAL,
-            cv.CHAIN_APPROX_SIMPLE,
-        )
-        rocks_data_for_vis = None
-        if rock_contours:
-            rocks_data_for_vis = (
-                self.object_detector._filter_and_get_rocks_from_contours(
-                    rock_contours, robot_contour
-                )
-            )
-
-        # --- Orchestrate the drawing ---
-        final_image = self.visualizer.draw_all_detections(
-            processed_frame,
-            disk_data=disk_data_for_vis,
-            robot_data=robot_data_for_vis,
-            rocks_data=rocks_data_for_vis,
-        )
-
-        # --- Display the final result ---
-        self.visualizer._display_frame("All Detections", final_image)
 
 
 # -------------------------------------------------------------------------
@@ -1471,9 +1638,10 @@ class VisionDetectionError(VisionError):
 
 if __name__ == "__main__":
     with Vision(frame_scale_factor=0.6, calibration_debug=False) as vis:
-        vis.detect_disk(True)
+        # vis.detect_disk(True)
         # vis.detect_robot(True)
         # vis.detect_rocks(True)
-        # vis.set_camera_settings()
+        # vis.detect_workspace(True)
+        vis.set_camera_settings()
         # vis.dump_calibration_data()
         # print(vis)
