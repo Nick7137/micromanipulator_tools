@@ -1424,51 +1424,76 @@ class Vision:
 
         return raw_frame
 
-    def dump_calibration_data(self) -> None:
+    def _restart_camera_manager(self):
         """
         TODO
         """
 
-        self.calibration_manager.dump_calibration_data()
+        print("Restarting main threaded camera stream...")
+        try:
+            self.camera_manager = ThreadingCameraManager(self.camera_index)
+            print("Main stream restarted successfully.")
+        except VisionConnectionError as e:
+            raise (f"FATAL: Failed to restart camera manager: {e}") from e
 
     def set_camera_settings(self) -> None:
         """
         TODO
         """
 
-        print(
-            "Entered settings configuration mode. Press 'q' to exit when done."
-        )
+        print("\n--- Entering Camera Settings Mode 'q' to Exit ---")
+        print("Stopping main threaded stream to access hardware settings...")
 
-        self.camera_manager._open_settings_dialog()
+        # Stop and clean up the current (fast) camera manager
+        self.camera_manager._cleanup()
 
-        while True:
-            try:
-                # Try to get and show the processed frame
-                frame = self._get_processed_frame()
-                cv.imshow("Camera Settings Preview", frame)
+        print("Opening camera with cv.CAP_DSHOW for settings access...")
 
-            except VisionDetectionError as e:
-                # If processing fails, show a black "error" frame
-                # instead of crashing.
-                print(f"Preview Warning: {e}")
-                error_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                cv.putText(
-                    error_frame,
-                    "Frame Processing Error",
-                    (50, 240),
-                    cv.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (0, 0, 255),
-                    2,
-                )
-                cv.imshow("Camera Settings Preview", error_frame)
+        # Create a temporary, blocking camera instance with the DSHOW backend
+        settings_cam = cv.VideoCapture(self.camera_index, cv.CAP_DSHOW)
 
-            # This part remains the same
-            if cv.waitKey(1) & 0xFF == ord("q"):
-                break
+        # Restart the main manager before failing if it did not open.
+        if not settings_cam.isOpened():
+            print("ERROR: Could not open camera with DSHOW backend.")
+            print("Restarting main stream with previous settings...")
+            self._restart_camera_manager()
+            return
 
-        cv.destroyAllWindows()
+        try:
+            # Open the settings dialog.
+            settings_cam.set(cv.CAP_PROP_SETTINGS, 1)
+
+            # Run a simple, blocking preview loop to observe changes
+            while True:
+                ret, frame = settings_cam.read()
+
+                if not ret:
+                    print("Warning: Lost connection to settings camera.")
+                    break
+
+                # Show a preview with a clear title
+                cv.imshow("Camera Settings Preview (DSHOW)", frame)
+
+                # Wait for 'q' to be pressed to close the preview
+                if cv.waitKey(1) & 0xFF == ord("q"):
+                    break
+        finally:
+            # Clean up the temporary DSHOW camera and any open windows
+            settings_cam.release()
+            cv.destroyAllWindows()
+            print("DSHOW camera released.")
+
+        print("--- Exiting Camera Settings Mode ---")
+
+        # Restart the main threaded camera manager with the fast backend
+        self._restart_camera_manager()
+
+    def dump_calibration_data(self) -> None:
+        """
+        TODO
+        """
+
+        self.calibration_manager.dump_calibration_data()
 
     def detect_disk(
         self, visualize: bool = False
@@ -1665,19 +1690,18 @@ if __name__ == "__main__":
         # vis.dump_calibration_data()
         # print(vis)
 
-        # print("\nStarting lag test. Press 'q' to quit.")
-        # while True:
-        #     try:
-        #         frame = vis._get_processed_frame()
-        #         cv.imshow("Lag Test", frame)
+        print("\nStarting lag test. Press 'q' to quit.")
+        while True:
+            try:
+                frame = vis._get_processed_frame()
+                cv.imshow("Lag Test", frame)
 
-        #         # Simulate heavy work taking 0.5 seconds
-        #         print("Main loop is 'busy'...")
+                # Simulate heavy work taking 0.5 seconds
+                print("Main loop is 'busy'...")
 
-        #     except VisionError as e:
-        #         print(f"Error during preview: {e}")
-        #         time.sleep(1)  # Wait a bit before retrying
+            except VisionError as e:
+                print(f"Error during preview: {e}")
 
-        #     if cv.waitKey(1) & 0xFF == ord("q"):
-        #         break
-        # cv.destroyAllWindows()
+            if cv.waitKey(1) & 0xFF == ord("q"):
+                break
+        cv.destroyAllWindows()
