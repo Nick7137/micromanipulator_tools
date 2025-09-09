@@ -45,7 +45,7 @@ def main():
 
         # nc.drive_base_joint()
         # nc.drive_elbow_joint()
-        nc.drive_prismatic_joint(reverse=False)
+        nc.drive_prismatic_joint(reverse=True)
         # nc.drive_tweezers()
 
         # nc.drive_base_joint(reverse=True)
@@ -58,7 +58,7 @@ def main():
         #     nc.drive_base_joint(reverse=False)
         #     time.sleep(5)
 
-        # nc.stop()
+        nc.stop()
 
 
 if __name__ == "__main__":

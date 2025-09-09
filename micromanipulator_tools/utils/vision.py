@@ -2,10 +2,13 @@
 # TODO make file header comment
 # TODO make the docstrings good.
 # TODO create a visualize everything function and add text to it.
-# TODO go through all the code and check if any of it is unused or completely irrelevent
-# TODO break class up into simpler subclasses
 # TODO make all errors have the name of the class in them.
 # TODO check for any inconsistencies at all
+# TODO refactor the class so that the logical flow is clean - use subclasses
+# TODO go through all the code and check if any of it is unused or completely irrelevent
+# TODO not focussing properly
+# TODO go through the logical flow and ask see if the correcting and resizing should be done automatically
+# TODO why is it so slow on startup - optimise for efficiency
 
 # =============================================================================
 
@@ -105,11 +108,16 @@ class Vision:
 
     DEFAULT_FRAME_SCALE_FACTOR = 1
 
+    # Hardware measurements
+    BASE_TO_DISK_CENTER = 76.4  # mm
+    DISK_RADIUS = 74.5
+
     # Camera constants
     DEFAULT_CAMERA_CHANNEL = 0
     DEFAULT_CAMERA_WIDTH = 1920
     DEFAULT_CAMERA_HEIGHT = 1080
     DEFAULT_FOCUS_LEVEL = 45
+    NUM_INIT_FRAMES = 10
 
     # Calibration specific settings
     CHESSBOARD_SIZE = (9, 6)
@@ -191,11 +199,6 @@ class Vision:
         Raises:
             VisionCalibrationError: If calibration
                 creation or loading fails.
-
-        Note:
-            Camera connection is deferred until first use. Calibration
-            data is automatically created if missing using default
-            settings.
         """
 
         # Get important file paths.
@@ -222,6 +225,8 @@ class Vision:
         if not os.path.exists(default_path):
             self._calibration_run()
         self._load_calibration_data()
+
+        self._initialize_camera()
 
     @tested
     def __enter__(self) -> "Vision":
@@ -634,7 +639,10 @@ class Vision:
         self._camera.set(cv.CAP_PROP_AUTOFOCUS, 0)
         self._camera.set(cv.CAP_PROP_FOCUS, self.DEFAULT_FOCUS_LEVEL)
 
-        # print(f"Camera {self._camera_index} initialized")
+        # Capture a few frames to warm the camera up and allow the focus
+        # to set, this is important otherwise it will be fuzzy.
+        for i in range(self.NUM_INIT_FRAMES):
+            self.capture_frame()
 
     @tested
     def _visualize_orientation(
@@ -816,6 +824,66 @@ class Vision:
     # Private helper functions for detection methods---------------------------
     # -------------------------------------------------------------------------
 
+    # TODO
+    def _convert_coords_to_polar(
+        self,
+        frame: np.ndarray,
+        coords: Tuple[int, int],
+    ) -> Tuple[float, float]:
+        """
+        Convert Cartesian coordinates to polar coordinates relative to
+        robot base.
+
+        Establishes polar origin below the detected disk center using
+        physical scaling ratios. Converts coordinates to robot-centric
+        polar form with 0° pointing up and positive angles
+        counterclockwise.
+
+        Args:
+            frame (np.ndarray): Input frame containing disk.
+            coords (Tuple[int, int]): (x, y) coordinates to convert.
+
+        Returns:
+            Tuple[float, float]: (radius, angle_deg) where 0° = up,
+                positive = counterclockwise, range [-180°, 180°].
+        """
+
+        # Detect disk to establish reference point
+        disk_center, disk_radius = self.detect_disk(frame, visualize=False)
+        disk_center_x, disk_center_y = disk_center
+
+        disk_to_origin_scaling = self.BASE_TO_DISK_CENTER / self.DISK_RADIUS
+
+        # Calculate polar origin (vertically below disk center)
+        origin_x = disk_center_x
+        origin_y = disk_center_y + disk_radius * disk_to_origin_scaling
+
+        # Convert input coordinates to polar
+        input_x, input_y = coords
+
+        # Calculate displacement from origin, note, we are also
+        # changing the coordinate system with these operations to make
+        # y point up from the origin and x point to the right.
+        delta_x = input_x - origin_x
+        delta_y = origin_y - input_y
+
+        # Calculate radius (distance from origin)
+        radius = np.sqrt(delta_x**2 + delta_y**2)
+
+        # Calculate angle in radians, then convert to degrees
+        standard_angle_rad = np.arctan2(delta_y, delta_x)
+        standard_angle_deg = np.degrees(standard_angle_rad)
+
+        # We need to convert the angle to the coordinate system defined
+        # in the schematic.
+        # Standard 90° (up) -> Our 0°
+        # Standard 180° (left) -> Our +90°
+        # Standard 270° (down) -> Our ±180°
+        # Standard 0° (right) -> Our -90°
+        angle_deg = standard_angle_deg - 90
+
+        return (radius, angle_deg)
+
     @tested
     def _create_robot_head_mask(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -955,6 +1023,191 @@ class Vision:
 
         return (link_center, (link_width, link_length), head_angle_deg)
 
+    # TODO
+    def _create_disk_mask(
+        self, frame: np.ndarray
+    ) -> Tuple[np.ndarray, Tuple[int, int], int]:
+        """
+        Create circular mask for disk area detection.
+
+        Detects the disk and creates a binary mask where only the disk
+        area is white (255) and everything else is black (0).
+
+        Args:
+            frame (np.ndarray): Input frame to process.
+
+        Returns:
+            Tuple[np.ndarray, Tuple[int, int], int]: (mask, disk_center,
+                disk_radius) where mask is the binary disk mask,
+                disk_center is (x, y) coordinates, and disk_radius is
+                radius in pixels.
+        """
+
+        disk_center, disk_radius = self.detect_disk(frame, visualize=False)
+        mask_disk = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv.circle(mask_disk, disk_center, disk_radius, 255, -1)
+
+        return mask_disk, disk_center, disk_radius
+
+    # TODO
+    def _create_rock_detection_mask(
+        self,
+        frame: np.ndarray,
+        disk_mask: np.ndarray,
+        disk_center: Tuple[int, int],
+        disk_radius: int,
+    ) -> np.ndarray:
+        """
+        Create processed mask for rock detection within disk area.
+
+        Converts frame to grayscale, applies disk mask, blurs to reduce
+        noise, thresholds for dark objects, applies morphological
+        operations, and creates cleanup mask to remove edge artifacts.
+
+        Args:
+            frame (np.ndarray): Input BGR frame.
+            disk_mask (np.ndarray): Binary mask of disk area.
+            disk_center (Tuple[int, int]): Disk center coordinates.
+            disk_radius (int): Disk radius in pixels.
+
+        Returns:
+            np.ndarray: Processed binary mask with rock candidates in
+                white and background in black.
+        """
+
+        # Convert to grayscale and mask to look at only the disk
+        gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+        gray_masked = cv.bitwise_and(gray, disk_mask)
+        blurred = cv.GaussianBlur(gray_masked, self.ROCK_BLUR_KERNEL, 0)
+
+        # Create binary mask for rock colors (dark grays/blacks)
+        _, rock_mask = cv.threshold(
+            blurred, self.ROCK_GRAY_UPPER_THRESHOLD, 255, cv.THRESH_BINARY_INV
+        )
+
+        # Apply morphological operations to clean up the mask
+        kernel = np.ones(
+            (self.ROCK_MORPH_KERNEL_SIZE, self.ROCK_MORPH_KERNEL_SIZE),
+            np.uint8,
+        )
+        processed_mask = cv.morphologyEx(rock_mask, cv.MORPH_OPEN, kernel)
+        processed_mask = cv.morphologyEx(
+            processed_mask, cv.MORPH_CLOSE, kernel
+        )
+
+        # Create cleanup mask to remove disk edge defects
+        cleanup_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv.circle(cleanup_mask, disk_center, disk_radius - 4, 255, -1)
+        processed_mask = cv.bitwise_and(processed_mask, cleanup_mask)
+
+        return processed_mask
+
+    # TODO
+    def _filter_rock_contours(
+        self, contours: List[np.ndarray], robot_result: Optional[Tuple]
+    ) -> List[Tuple[np.ndarray, Tuple[int, int], float]]:
+        """
+        Filter contours by area and exclude those inside robot area.
+
+        Processes detected contours to find valid rock candidates by
+        filtering on area constraints and excluding any rocks that fall
+        within the robot's detected area.
+
+        Args:
+            contours (List[np.ndarray]): List of detected contours from
+                cv.findContours.
+            robot_result (Optional[Tuple]): Robot detection result from
+                detect_robot_head, or None if no robot detected.
+
+        Returns:
+            List[Tuple[np.ndarray, Tuple[int, int], float]]: List of
+                tuple rock candidates as (min_rect, centroid, area).
+        """
+
+        detected_rocks = []
+
+        for contour in contours:
+            area = cv.contourArea(contour)
+
+            # Check if contour area is within valid rock size range
+            min_area = int(
+                self.ROCK_MIN_AREA_PIXELS * self._frame_scale_factor**2
+            )
+            max_area = int(
+                self.ROCK_MAX_AREA_PIXELS * self._frame_scale_factor**2
+            )
+
+            if min_area <= area <= max_area:
+                # Calculate centroid
+                moments = cv.moments(contour)
+                if moments["m00"] != 0:
+                    centroid_x = int(moments["m10"] / moments["m00"])
+                    centroid_y = int(moments["m01"] / moments["m00"])
+
+                    # Check if rock centroid is NOT inside robot area
+                    is_valid_rock = True
+                    if robot_result is not None:
+                        _, robot_contour = robot_result
+                        # Check if centroid is inside robot contour
+                        if (
+                            cv.pointPolygonTest(
+                                robot_contour, (centroid_x, centroid_y), False
+                            )
+                            >= 0
+                        ):
+                            # Rock is inside robot area, exclude it
+                            is_valid_rock = False
+
+                    if is_valid_rock:
+                        # Get minimum area rectangle (can be rotated)
+                        min_rect = cv.minAreaRect(contour)
+                        detected_rocks.append(
+                            (min_rect, (centroid_x, centroid_y), area)
+                        )
+
+        return detected_rocks
+
+    # TODO
+    def _convert_rocks_to_polar(
+        self,
+        frame: np.ndarray,
+        detected_rocks: List[Tuple[np.ndarray, Tuple[int, int], float]],
+    ) -> List[Tuple[Tuple[float, float], float, float]]:
+        """
+        Convert rock positions to polar coordinates relative to robot
+        base.
+
+        Converts each detected rock's centroid from Cartesian to polar
+        coordinates using the robot coordinate system where 0° points up
+        and positive angles are counterclockwise.
+
+        Args:
+            frame (np.ndarray): Input frame containing disk for
+                reference.
+            detected_rocks (List[Tuple]): List of detected rocks as
+                (min_rect, centroid, area) tuples.
+
+        Returns:
+            List[Tuple[Tuple[float, float], float, float]]: List of
+                rocks as ((radius, angle_deg), orientation_deg, area)
+                where radius and angle_deg are polar coordinates,
+                orientation_deg is rock orientation, and area is rock
+                area in pixels.
+        """
+
+        polar_rocks = []
+
+        for min_rect, centroid, area in detected_rocks:
+            # Convert centroid to polar coordinates
+            polar_coords = self._convert_coords_to_polar(frame, centroid)
+
+            # Extract rock orientation from minimum area rectangle
+            _, _, orientation_deg = min_rect
+
+            polar_rocks.append((polar_coords, orientation_deg, area))
+
+        return polar_rocks
+
     # -------------------------------------------------------------------------
     # Public interface: calibration and settings-------------------------------
     # -------------------------------------------------------------------------
@@ -1042,7 +1295,6 @@ class Vision:
         print(
             "Entered settings configuration mode. Press 'q' to exit when done."
         )
-        self._initialize_camera()
         self._camera.set(cv.CAP_PROP_SETTINGS, 1)
 
         while True:
@@ -1072,10 +1324,6 @@ class Vision:
         Returns:
             np.ndarray: Captured frame as BGR frame array.
 
-        Raises:
-            VisionConnectionError: If camera is not
-                initialized, frame capture fails, or camera connection
-                is lost.
 
         Example:
             with Vision() as vision:
@@ -1083,24 +1331,7 @@ class Vision:
                 cv.imshow("Live Frame", frame)
         """
 
-        self._initialize_camera()
-
-        if not self._camera.isOpened():
-            raise VisionConnectionError(
-                "Vision.capture_frame: Camera connection lost"
-            )
-
         ret, frame = self._camera.read()
-
-        if not ret:
-            raise VisionConnectionError(
-                "Vision.capture_frame: Failed to capture frame"
-            )
-
-        if frame is None:
-            raise VisionConnectionError(
-                "Vision.capture_frame: Captured frame is None"
-            )
         return frame
 
     @tested
@@ -1175,43 +1406,17 @@ class Vision:
         self, frame: np.ndarray, visualize: bool = False
     ) -> np.ndarray:
         """
-        Correct frame orientation using detected or stored angle error.
-
-        Applies rotation correction to align the frame properly. On
-        first call, automatically detects the orientation angle and
-        stores it for subsequent corrections. Uses the same angle for
-        all future corrections unless manually reset.
-
-        Args:
-            frame (np.ndarray): Input frame to correct.
-            visualize (bool, optional): If True, display the corrected
-                frame. Defaults to False.
-
-        Returns:
-            np.ndarray: Orientation-corrected frame.
-
-        Raises:
-            VisionError: If orientation angle cannot be
-                detected from the frame.
-
-        Note:
-            Orientation angle is detected once and cached. To
-            recalculate, delete the _orientation_angle_error attribute
-            or call detect_orientation_angle_error() manually.
+        TODO
         """
 
-        # Use stored angle or detect if not available
-        if not hasattr(self, "_orientation_angle_error"):
-            self._orientation_angle_error = (
-                self.detect_orientation_angle_error(frame, visualize)
-            )
+        orientation_angle_error = self.detect_orientation_angle_error(
+            frame, visualize
+        )
 
-        rotated = self.rotate_frame(frame, self._orientation_angle_error)
+        rotated = self.rotate_frame(frame, orientation_angle_error)
 
         if visualize:
-            cv.imshow("Rotated Frame", rotated)
-            cv.waitKey(0)
-            cv.destroyAllWindows()
+            self._display("Rotated Frame", rotated)
 
         return rotated
 
@@ -1310,7 +1515,7 @@ class Vision:
 
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
         edges = cv.Canny(gray, 50, 150)
-        lines = cv.HoughLines(edges, 1, np.pi / 1200, threshold=30)
+        lines = cv.HoughLines(edges, 1, np.pi / 3600, threshold=30)
 
         if lines is None:
             raise VisionError(
@@ -1400,35 +1605,12 @@ class Vision:
         else:
             raise ValueError("No disk detected in the frame.")
 
-    @tested
-    # TODO make this return the position of the robot in polar
+    # TODO frame has to be oriented correctly before calling this method. either check or bake in.
     def detect_robot_head(
         self, frame: np.ndarray, visualize: bool = False
-    ) -> Optional[Tuple[Tuple[int, int], np.ndarray]]:
+    ) -> Optional[Tuple[Tuple[float, float], np.ndarray]]:
         """
-        Detect robot head position and contour.
-
-        Locates the green robot head by creating a binary mask, finding
-        quadrilateral contours, and calculating the combined head and
-        prismatic link position. Returns the centroid of the head only,
-        along with the combined contour.
-
-        Args:
-            frame (np.ndarray): Input BGR frame to analyze.
-            visualize (bool, optional): If True, display detected head
-                and link with green contour and red center. Defaults to
-                False.
-
-        Returns:
-            Optional[Tuple[Tuple[int, int], np.ndarray]]:
-                ((centroid_x, centroid_y), combined_contour) where
-                centroid is the head center coordinates and
-                combined_contour includes both head and prismatic link,
-                or None if no head detected.
-
-        Note:
-            Visualization shows combined head and link shape but
-            centroid coordinates are calculated from head only.
+        TODO
         """
 
         robot_head_mask = self._create_robot_head_mask(frame)
@@ -1469,16 +1651,18 @@ class Vision:
 
         centroid = (centroid_x, centroid_y)
 
+        polar_centroid = self._convert_coords_to_polar(frame, centroid)
+
         if visualize:
             visualization_frame = self._visualize_robot_head(
                 frame, centroid, combined_contour
             )
-            self._display("Robot Head + link", visualization_frame)
+            self._display("Robot Head and prismatic link", visualization_frame)
 
-        return (centroid, combined_contour)
+        return (polar_centroid, combined_contour)
 
-    # TODO clean this up with helper functions.
-    # TODO make this actually return the position and orientation of the rocks in polar.
+    # TODO frame has to be oriented correctly before calling this method. either check or bake in.
+    # TODO return the box outline of each particle?
     def detect_rocks(
         self,
         frame: np.ndarray,
@@ -1488,90 +1672,21 @@ class Vision:
         TODO
         """
 
-        # Detect the disk and create a circular mask for the disk area.
-        disk_center, disk_radius = self.detect_disk(frame, visualize=False)
-        mask_disk = np.zeros(frame.shape[:2], dtype=np.uint8)
-        cv.circle(mask_disk, disk_center, disk_radius, 255, -1)
+        disk_mask, disk_center, disk_radius = self._create_disk_mask(frame)
 
-        # Convert to grayscale and mask so we look at only the disk then
-        # blur to eliminate noise
-        gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-        gray_masked = cv.bitwise_and(gray, mask_disk)
-        blurred = cv.GaussianBlur(gray_masked, self.ROCK_BLUR_KERNEL, 0)
-
-        cv.imshow("blurred", blurred)
-
-        # Create binary mask for rock colors (dark grays/blacks). We
-        # invert the threshold to make the rocks (objects of interest)
-        # white - this is convention.
-        _, rock_mask = cv.threshold(
-            blurred, self.ROCK_GRAY_UPPER_THRESHOLD, 255, cv.THRESH_BINARY_INV
+        processed_mask = self._create_rock_detection_mask(
+            frame, disk_mask, disk_center, disk_radius
         )
-
-        cv.imshow("blurred", rock_mask)
-
-        # Apply morphological operations to clean up the mask
-        kernel = np.ones(
-            (self.ROCK_MORPH_KERNEL_SIZE, self.ROCK_MORPH_KERNEL_SIZE),
-            np.uint8,
-        )
-        processed_mask = cv.morphologyEx(rock_mask, cv.MORPH_OPEN, kernel)
-        processed_mask = cv.morphologyEx(
-            processed_mask, cv.MORPH_CLOSE, kernel
-        )
-
-        # Create an even mask to make all pixels outside the disk appear
-        # black and consequently make sure there are no disk edge
-        # defects. This is done by using a slightly smaller disk
-        cleanup_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        cv.circle(cleanup_mask, disk_center, disk_radius - 4, 255, -1)
-        processed_mask = cv.bitwise_and(processed_mask, cleanup_mask)
 
         # Find contours of potential rocks
         contours, _ = cv.findContours(
             processed_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
         )
 
-        cv.imshow("processed mask", processed_mask)
-
         # Filter contours by area and detect robot for exclusion
         robot_result = self.detect_robot_head(frame, visualize=False)
 
-        detected_rocks = []
-        for contour in contours:
-            area = cv.contourArea(contour)
-
-            if (
-                int(self.ROCK_MIN_AREA_PIXELS * self._frame_scale_factor**2)
-                <= area
-                <= int(self.ROCK_MAX_AREA_PIXELS * self._frame_scale_factor**2)
-            ):
-                # Calculate centroid
-                moments = cv.moments(contour)
-                if moments["m00"] != 0:
-                    centroid_x = int(moments["m10"] / moments["m00"])
-                    centroid_y = int(moments["m01"] / moments["m00"])
-
-                    # Check if rock centroid is NOT inside robot area
-                    is_valid_rock = True
-                    if robot_result is not None:
-                        _, robot_contour = robot_result
-                        # Check if centroid is inside robot contour
-                        if (
-                            cv.pointPolygonTest(
-                                robot_contour, (centroid_x, centroid_y), False
-                            )
-                            >= 0
-                        ):
-                            # Rock is inside robot area, exclude it
-                            is_valid_rock = False
-
-                    if is_valid_rock:
-                        # Get minimum area rectangle (can be rotated)
-                        min_rect = cv.minAreaRect(contour)
-                        detected_rocks.append(
-                            (min_rect, (centroid_x, centroid_y), area)
-                        )
+        detected_rocks = self._filter_rock_contours(contours, robot_result)
 
         # Return None if no rocks detected.
         if not detected_rocks:
@@ -1581,9 +1696,11 @@ class Vision:
             visualization_frame = self._visualize_rocks(frame, detected_rocks)
             self._display("Rocks", visualization_frame)
 
-        return detected_rocks
+        polar_rocks = self._convert_rocks_to_polar(frame, detected_rocks)
 
-    # TODO make this return the centerline arc and the max and min scaled by the size of the disk.
+        return polar_rocks
+
+    # TODO make this return the centerline arc equation and the max and min scaled by the size of the disk.
     # TODO must ensure the orientation has been corrected before using this function, raise an error if the orientation has not been corrected and this function is called.
     def detect_workspace():
         """
@@ -1592,7 +1709,7 @@ class Vision:
 
         pass
 
-    # TODO
+    # TODO add the text to all the detections.
     def visualize_all_detections(
         self, frame: np.ndarray, window_name: str = "All Detections"
     ) -> np.ndarray:
@@ -1604,25 +1721,29 @@ class Vision:
 # ==============================================================================
 # ==============================================================================
 
+if __name__ == "__main__":
+    with Vision(frame_scale_factor=0.6, calibration_debug=False) as vis:
+        # vis.set_camera_settings()
+        frame = vis.capture_frame()
+        resized_frame = vis.scale_frame(frame)
+        corrected_orientation = vis.correct_frame_orientation(
+            resized_frame, False
+        )
+        center, radius = vis.detect_disk(corrected_orientation, False)
+        centroid = vis.detect_robot_head(corrected_orientation, False)
+        detect_rocks = vis.detect_rocks(corrected_orientation, False)
 
-with Vision(frame_scale_factor=0.6, calibration_debug=False) as vis:
-    # while True:
-    #     frame = vis.capture_frame()
-    #     # undistorted = vis.undistort_frame(frame)
-    #     resized_frame = vis.scale_frame(frame)
+        while True:
+            frame = vis.capture_frame()
+            resized_frame = vis.scale_frame(frame)
+            corrected_orientation = vis.correct_frame_orientation(
+                resized_frame, False
+            )
+            cv.imshow("Video", corrected_orientation)
 
-    #     cv.imshow("Undistorted Video Feed", resized_frame)
+            # Wait 20ms for keypress; use bitwise mask (0xFF) to extract only
+            # ASCII bits, exit if 'd' pressed.
+            if cv.waitKey(20) & 0xFF == ord("q"):
+                break
 
-    #     # Wait 20ms for keypress; use bitwise mask (0xFF) to extract
-    #     # only ASCII bits, exit if 'q' pressed.
-    #     if cv.waitKey(1) & 0xFF == ord("q"):
-    #         break
-
-    # cv.destroyAllWindows()
-    # vis.set_camera_settings()
-    frame = vis.capture_frame()
-    resized_frame = vis.scale_frame(frame)
-    corrected_orientation = vis.correct_frame_orientation(resized_frame, False)
-    center, radius = vis.detect_disk(corrected_orientation, False)
-    # centroid = vis.detect_robot_head(corrected_orientation, True)
-    detect_rocks = vis.detect_rocks(corrected_orientation, True)
+        cv.destroyAllWindows()
