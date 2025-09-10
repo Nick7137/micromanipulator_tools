@@ -152,6 +152,10 @@ class VisionBase:
 
     # Window name for the setup procedure
     SETUP_WINDOW_NAME = "Disk Positioning Setup"
+    HEIGHT_SETUP_WINDOW_NAME = "Camera Height Setup"
+
+    TARGET_DISK_RADIUS_OPTIMAL = 454
+    RADIUS_TOLERANCE = 2
 
     # Target position for the disk center as a fraction of frame
     # dimensions. Horizontally centered (0.5), and vertically tunable
@@ -159,8 +163,8 @@ class VisionBase:
     SETUP_TARGET_Y_POSITION_FACTOR = 0.54
 
     # Tolerances for the setup to be considered "OK"
-    SETUP_POSITION_TOLERANCE_PX = 5
-    SETUP_ANGLE_TOLERANCE_DEG = 0.2
+    SETUP_POSITION_TOLERANCE_PX = 10
+    SETUP_ANGLE_TOLERANCE_DEG = 0.3
 
     MAIN_DISPLAY_WINDOW_NAME = "Vision Real-time Detection"
     DISPLAY_REFRESH_RATE_MS = 30
@@ -227,6 +231,10 @@ class VisionBase:
         cv.imshow(window_name, frame)
         cv.waitKey(0)
         cv.destroyAllWindows()
+
+    @property
+    def SCALED_DISK_RADIUS(self):
+        return int(self.TARGET_DISK_RADIUS_OPTIMAL * self.frame_scale_factor)
 
 
 class ThreadingCameraManager(VisionBase):
@@ -1219,8 +1227,70 @@ class ObjectDetector(VisionBase):
 
 class Visualizer(VisionBase):
     """
-    TODO
+    TODO - this needs a lot of cleanup but no time :/
     """
+
+    def __init__(self, frame_scale_factor: float = None):
+        if frame_scale_factor is None:
+            self.frame_scale_factor = self.DEFAULT_FRAME_SCALE_FACTOR
+        else:
+            self.frame_scale_factor = frame_scale_factor
+
+    def _draw_text(
+        self,
+        frame: np.ndarray,
+        text: str,
+        position: Tuple[int, int],
+        color: Tuple[int, int, int] = None,
+        size: float = None,
+        thickness: int = None,
+    ) -> None:
+        """
+        TODO
+        """
+        if color is None:
+            color = self.WHITE
+        if size is None:
+            size = self.TEXT_SIZE
+        if thickness is None:
+            thickness = self.TEXT_THICKNESS
+
+        cv.putText(
+            frame,
+            text,
+            position,
+            cv.FONT_HERSHEY_SIMPLEX,
+            size,
+            color,
+            thickness,
+        )
+
+    def _draw_exit_instruction(self, frame: np.ndarray) -> None:
+        """
+        TODO
+        """
+        h, w = frame.shape[:2]
+        exit_text = "Press 'q' to exit"
+        self._draw_text(
+            frame,
+            exit_text,
+            (w - 230, 40),
+            self.RED,
+            0.8,
+            2,
+        )
+
+    def _draw_enter_instruction(self, frame: np.ndarray) -> None:
+        """
+        TODO
+        """
+        h, w = frame.shape[:2]
+        enter_text = "Press 'Enter' to continue"
+        text_size = cv.getTextSize(
+            enter_text, cv.FONT_HERSHEY_SIMPLEX, 1.2, 3
+        )[0]
+        text_x = (w - text_size[0]) // 2  # Centered horizontally
+        self._draw_text(frame, enter_text, (text_x, h // 4), self.CYAN, 1.2, 3)
 
     def _visualize_disk(
         self, frame: np.ndarray, center: Tuple[int, int], radius: int
@@ -1238,14 +1308,11 @@ class Visualizer(VisionBase):
         # Add the text label
         label_pos = (center[0] - 30, center[1] - radius - 10)
 
-        cv.putText(
+        self._draw_text(
             vis_frame,
             f"Disk (r={radius}px)",
             label_pos,
-            cv.FONT_HERSHEY_SIMPLEX,
-            self.TEXT_SIZE,
             self.CYAN,
-            self.TEXT_THICKNESS,
         )
 
         return vis_frame
@@ -1275,14 +1342,11 @@ class Visualizer(VisionBase):
 
         # Position and draw the text label
         label_pos = (centroid_px[0] + 10, centroid_px[1])
-        cv.putText(
+        self._draw_text(
             vis_frame,
             label_text,
             label_pos,
-            cv.FONT_HERSHEY_SIMPLEX,
-            self.TEXT_SIZE,
             self.RED,
-            self.TEXT_THICKNESS,
         )
 
         return vis_frame
@@ -1315,23 +1379,19 @@ class Visualizer(VisionBase):
             label_text = f"R{i + 1}"
             label_pos = (centroid[0], centroid[1] - 15)
 
-            cv.putText(
+            self._draw_text(
                 vis_frame,
                 label_text,
                 label_pos,
-                cv.FONT_HERSHEY_SIMPLEX,
-                self.TEXT_SIZE,
                 self.RED,
-                self.TEXT_THICKNESS,
             )
         return vis_frame
 
     def _visualize_workspace_arc(
         self,
         frame: np.ndarray,
-        arc_center_px: Tuple[int, int],
-        arc_radius_px: int,
         disk_center_px: Tuple[int, int],
+        disk_radius_px: int,
     ) -> np.ndarray:
         """
         TODO
@@ -1339,41 +1399,54 @@ class Visualizer(VisionBase):
 
         vis_frame = frame.copy()
 
-        # Draw the operational arc/circle
-        cv.circle(vis_frame, arc_center_px, arc_radius_px, self.MAGENTA, 2)
+        # Calculate workspace radius in pixels
+        scaling = self.BASE_TO_DISK_CENTER_MM / self.DISK_RADIUS_MM
+        workspace_radius_px = int(disk_radius_px * scaling)
 
-        # Draw the robot's base origin
-        cv.circle(vis_frame, arc_center_px, 8, self.YELLOW, -1)
-        cv.circle(vis_frame, arc_center_px, 8, self.BLACK, 2)
+        # Calculate the arc center so the top of the arc touches the disk center
+        # Arc center = disk center + workspace_radius downward
+        arc_center_x = disk_center_px[0]
+        arc_center_y = disk_center_px[1] + workspace_radius_px
+        arc_center = (arc_center_x, arc_center_y)
 
-        # Draw a line connecting the origin to the disk center to show the radius
-        cv.line(
+        # Draw the main workspace arc (bottom semicircle - 180 to 360 degrees)
+        cv.ellipse(
             vis_frame,
-            arc_center_px,
-            disk_center_px,
-            self.YELLOW,
-            2,
-            cv.LINE_AA,
-        )
-
-        # Add text labels for clarity
-        cv.putText(
-            vis_frame,
-            "Robot Origin",
-            (arc_center_px[0] + 15, arc_center_px[1]),
-            cv.FONT_HERSHEY_SIMPLEX,
-            self.TEXT_SIZE,
-            self.YELLOW,
-            self.TEXT_THICKNESS,
-        )
-        cv.putText(
-            vis_frame,
-            f"Arc (r={self.BASE_TO_DISK_CENTER_MM}mm)",
-            (disk_center_px[0], disk_center_px[1] - 15),
-            cv.FONT_HERSHEY_SIMPLEX,
-            self.TEXT_SIZE,
+            arc_center,
+            (workspace_radius_px, workspace_radius_px),
+            0,  # rotation angle
+            180,  # start angle (degrees) - bottom left
+            360,  # end angle (degrees) - bottom right
             self.MAGENTA,
-            self.TEXT_THICKNESS,
+            2,  # thickness
+        )
+
+        # Draw the smaller red arc (same center, smaller radius)
+        # TODO: Replace YOUR_SCALING_CONSTANT with the actual value you determine
+        smaller_radius_px = int(
+            disk_radius_px * 0.7
+        )  # placeholder - replace with your constant
+        cv.ellipse(
+            vis_frame,
+            arc_center,
+            (smaller_radius_px, smaller_radius_px),
+            0,  # rotation angle
+            180,  # start angle (degrees) - bottom left
+            360,  # end angle (degrees) - bottom right
+            self.RED,
+            2,  # thickness
+        )
+
+        # Optional: Draw the arc center point (robot base)
+        cv.circle(vis_frame, arc_center, 3, self.MAGENTA, -1)
+
+        # Optional: Add label
+        label_pos = (arc_center[0] - 40, arc_center[1] + 20)
+        self._draw_text(
+            vis_frame,
+            "Workspace",
+            label_pos,
+            self.MAGENTA,
         )
 
         return vis_frame
@@ -1482,6 +1555,406 @@ class Visualizer(VisionBase):
         # Draw the orientation line
         cv.line(frame, start_point, end_point, color, 2, cv.LINE_AA)
 
+    def _add_height_setup_overlay(
+        self,
+        frame: np.ndarray,
+        radius: int,
+        status_color: tuple,
+        instruction_text: str,
+        instruction_color: tuple,
+        is_ok: bool,
+    ) -> None:
+        """
+        Add informational overlay to height setup frame.
+        """
+        h, w = frame.shape[:2]
+
+        # Calculate actual range
+        min_radius = self.SCALED_DISK_RADIUS - self.RADIUS_TOLERANCE
+        max_radius = self.SCALED_DISK_RADIUS + self.RADIUS_TOLERANCE
+
+        # Current radius display
+        radius_text = f"Current Radius: {radius} pixels"
+        self._draw_text(
+            frame,
+            radius_text,
+            (20, 40),
+            self.WHITE,
+            0.8,
+            2,
+        )
+
+        # Target range display
+        target_text = f"Target: {self.SCALED_DISK_RADIUS} ({min_radius}-{max_radius}) pixels"
+        self._draw_text(
+            frame,
+            target_text,
+            (20, 65),
+            self.CYAN,
+            0.6,
+            1,
+        )
+
+        if is_ok:
+            self._draw_enter_instruction(frame)
+        else:
+            text_size = cv.getTextSize(
+                instruction_text, cv.FONT_HERSHEY_SIMPLEX, 1.2, 3
+            )[0]
+            text_x = (w - text_size[0]) // 2
+            self._draw_text(
+                frame,
+                instruction_text,
+                (text_x, h // 4),
+                instruction_color,
+                1.2,
+                3,
+            )
+
+        # Progress bar showing how close to target
+        self._draw_radius_progress_bar(frame, radius, w, h)
+
+        self._draw_exit_instruction(frame)
+
+    def _draw_radius_progress_bar(
+        self, frame: np.ndarray, current_radius: int, w: int, h: int
+    ) -> None:
+        """
+        Draw a progress bar showing current radius relative to target.
+        """
+        # Progress bar dimensions
+        bar_width = w - 40
+        bar_height = 20
+        bar_x = 20
+        bar_y = h - 60
+
+        # Calculate range for progress bar (extend beyond target for better visualization)
+        range_min = self.SCALED_DISK_RADIUS - (self.RADIUS_TOLERANCE * 10)
+        range_max = self.SCALED_DISK_RADIUS + (self.RADIUS_TOLERANCE * 10)
+
+        # Draw background bar
+        cv.rectangle(
+            frame,
+            (bar_x, bar_y),
+            (bar_x + bar_width, bar_y + bar_height),
+            self.WHITE,
+            1,
+        )
+
+        # Draw target zone (green area)
+        target_min = self.SCALED_DISK_RADIUS - self.RADIUS_TOLERANCE
+        target_max = self.SCALED_DISK_RADIUS + self.RADIUS_TOLERANCE
+
+        target_start_ratio = (target_min - range_min) / (range_max - range_min)
+        target_end_ratio = (target_max - range_min) / (range_max - range_min)
+
+        target_start_x = int(bar_x + target_start_ratio * bar_width)
+        target_end_x = int(bar_x + target_end_ratio * bar_width)
+
+        cv.rectangle(
+            frame,
+            (target_start_x, bar_y),
+            (target_end_x, bar_y + bar_height),
+            self.GREEN,
+            -1,
+        )
+
+        # Draw optimal line (center of target zone)
+        optimal_ratio = (self.SCALED_DISK_RADIUS - range_min) / (
+            range_max - range_min
+        )
+        optimal_x = int(bar_x + optimal_ratio * bar_width)
+        cv.line(
+            frame,
+            (optimal_x, bar_y - 5),
+            (optimal_x, bar_y + bar_height + 5),
+            self.CYAN,
+            2,
+        )
+
+        # Draw current position indicator
+        if range_min <= current_radius <= range_max:
+            current_ratio = (current_radius - range_min) / (
+                range_max - range_min
+            )
+            current_x = int(bar_x + current_ratio * bar_width)
+
+            # Choose color based on whether it's in target range
+            radius_error = abs(current_radius - self.SCALED_DISK_RADIUS)
+            indicator_color = (
+                self.GREEN
+                if radius_error <= self.RADIUS_TOLERANCE
+                else self.RED
+            )
+
+            cv.line(
+                frame,
+                (current_x, bar_y - 5),
+                (current_x, bar_y + bar_height + 5),
+                indicator_color,
+                3,
+            )
+
+        # Add labels
+        self._draw_text(
+            frame,
+            f"{range_min}",
+            (bar_x, bar_y + bar_height + 15),
+            self.WHITE,
+            0.4,
+            1,
+        )
+        self._draw_text(
+            frame,
+            f"{range_max}",
+            (bar_x + bar_width - 20, bar_y + bar_height + 15),
+            self.WHITE,
+            0.4,
+            1,
+        )
+        self._draw_text(
+            frame,
+            f"Target: {self.SCALED_DISK_RADIUS}",
+            (optimal_x - 30, bar_y - 10),
+            self.CYAN,
+            0.4,
+            1,
+        )
+
+    def _add_status_overlay(self, frame: np.ndarray, results: dict) -> None:
+        """
+        Add status information overlay to the display frame.
+        """
+        h, w = frame.shape[:2]
+
+        # Add frame rate or detection count
+        robot_status = "found" if results.get("robot") else "missing"
+        rock_count = len(results.get("rocks", []))
+
+        status_text = f"Robot: {robot_status} | Rocks: {rock_count}"
+
+        # Add semi-transparent background for text
+        overlay = frame.copy()
+        cv.rectangle(overlay, (10, 10), (300, 50), self.BLACK, -1)
+        cv.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+        self._draw_text(frame, status_text, (20, 35), self.WHITE, 0.7, 2)
+        self._draw_exit_instruction(frame)
+
+    def visualize_height_setup_frame(
+        self,
+        frame: np.ndarray,
+        radius: int,
+        center: Tuple[int, int],
+        status_color: tuple,
+        instruction_text: str,
+        instruction_color: tuple,
+        is_ok: bool,
+    ) -> np.ndarray:
+        """
+        Create a complete height setup visualization frame.
+        """
+        display_frame = frame.copy()
+
+        # Choose circle color based on status
+        circle_color = self.GREEN if is_ok else self.RED
+
+        # Draw disk visualization
+        cv.circle(display_frame, center, radius, circle_color, 3)
+        cv.circle(display_frame, center, 8, self.RED, -1)
+
+        # Add status information overlay
+        self._add_height_setup_overlay(
+            display_frame,
+            radius,
+            status_color,
+            instruction_text,
+            instruction_color,
+            is_ok,
+        )
+
+        return display_frame
+
+    def visualize_height_setup_no_disk(self, frame: np.ndarray) -> np.ndarray:
+        """
+        TODO
+        """
+
+        display_frame = frame.copy()
+        h, w = display_frame.shape[:2]
+
+        self._draw_text(
+            display_frame,
+            "NO DISK DETECTED",
+            (w // 2 - 150, h // 2),
+            self.RED,
+            1.5,
+            3,
+        )
+        self._draw_text(
+            display_frame,
+            "Ensure disk is visible in camera view",
+            (w // 2 - 250, h // 2 + 50),
+            self.WHITE,
+            0.8,
+            2,
+        )
+
+        return display_frame
+
+    def visualize_position_setup_frame(
+        self,
+        frame: np.ndarray,
+        detection: Optional[tuple],
+        target_pos: Tuple[int, int],
+    ) -> np.ndarray:
+        """
+        Create a complete position setup visualization frame.
+        """
+        display_frame = frame.copy()
+        h, w = display_frame.shape[:2]
+
+        # Draw crosshairs
+        cv.line(
+            display_frame,
+            (0, target_pos[1]),
+            (w, target_pos[1]),
+            self.YELLOW,
+            1,
+        )
+        cv.line(
+            display_frame,
+            (target_pos[0], 0),
+            (target_pos[0], h),
+            self.YELLOW,
+            1,
+        )
+
+        # Default instruction text
+        instruction_text = "Align the red and yellow crosses"
+        instruction_color = self.MAGENTA
+
+        if detection is not None:
+            center, radius, orientation_angle = detection
+
+            # Calculate position error
+            pos_error = np.linalg.norm(np.array(center) - np.array(target_pos))
+            is_position_ok = pos_error < self.SETUP_POSITION_TOLERANCE_PX
+            is_angle_ok = (
+                abs(orientation_angle) < self.SETUP_ANGLE_TOLERANCE_DEG
+            )
+
+            # Draw a small circle around the cross
+            cv.circle(display_frame, center, 20, self.BLACK, 1)
+
+            # Draw orientation line through disk center
+            self._visualize_orientation_cross(
+                display_frame,
+                center,
+                radius,
+                orientation_angle,
+                is_angle_ok,
+                is_position_ok,
+            )
+
+            # Show the disk perimeter if position and angle are both correct
+            if is_angle_ok and is_position_ok:
+                cv.circle(display_frame, center, radius, self.GREEN, 3)
+
+            status_text = f"Orientation: {-orientation_angle:.1f} deg"
+            self._draw_text(
+                display_frame,
+                status_text,
+                (20, 40),
+                self.WHITE,
+                0.7,
+                2,
+            )
+
+            # Update instruction text based on alignment
+            if is_position_ok and is_angle_ok:
+                self._draw_enter_instruction(display_frame)
+            else:
+                # Add centered instruction text for non-ready state
+                text_size = cv.getTextSize(
+                    instruction_text, cv.FONT_HERSHEY_SIMPLEX, 2, 3
+                )[0]
+                text_x = (w - text_size[0]) // 2
+                text_y = h // 4
+                self._draw_text(
+                    display_frame,
+                    instruction_text,
+                    (text_x, text_y),
+                    instruction_color,
+                    2,
+                    3,
+                )
+
+        self._draw_exit_instruction(display_frame)
+
+        return display_frame
+
+    def visualize_error_frame(
+        self, frame: np.ndarray, error_message: str
+    ) -> np.ndarray:
+        """
+        Create an error visualization frame with the error message displayed.
+        """
+        error_frame = frame.copy()
+        cv.putText(
+            error_frame,
+            str(error_message),
+            (20, 50),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            self.RED,
+            2,
+        )
+        return error_frame
+
+    def visualize_complete_scene(
+        self,
+        frame: np.ndarray,
+        disk_center: Tuple[int, int],
+        disk_radius: int,
+        robot_data: Optional[tuple] = None,
+        rocks_data: Optional[List[dict]] = None,
+    ) -> np.ndarray:
+        """
+        Create a complete scene visualization with all detected objects.
+        """
+        vis_frame = frame.copy()
+
+        # Always visualize the disk
+        vis_frame = self._visualize_disk(vis_frame, disk_center, disk_radius)
+
+        # Visualize workspace arc
+        vis_frame = self._visualize_workspace_arc(
+            vis_frame, disk_center, disk_radius
+        )
+
+        # Visualize robot if detected
+        if robot_data:
+            vis_frame = self._visualize_robot(
+                vis_frame, robot_data[0], robot_data[1], robot_data[2]
+            )
+
+        # Visualize rocks if detected
+        if rocks_data:
+            vis_frame = self._visualize_rocks(vis_frame, rocks_data)
+
+        return vis_frame
+
+    def visualize_main_display_frame(
+        self, frame: np.ndarray, results: dict
+    ) -> np.ndarray:
+        """
+        Create the main display frame with status overlay.
+        """
+        display_frame = frame.copy()
+        self._add_status_overlay(display_frame, results)
+        return display_frame
+
 
 class Vision(VisionBase):
     """
@@ -1518,7 +1991,7 @@ class Vision(VisionBase):
             self.calibration_manager._dist_coeffs,
         )
         self.object_detector = ObjectDetector(frame_scale_factor)
-        self.visualizer = Visualizer()
+        self.visualizer = Visualizer(self.frame_scale_factor)
 
         # Implement threading for the interactive setup.
         self._setup_lock = threading.Lock()
@@ -1540,7 +2013,7 @@ class Vision(VisionBase):
         self._setup_display_thread.daemon = True
         self._setup_display_thread.start()
 
-        self._run_interactive_setup()
+        # self._run_setup()
 
         # Stop both setup threads
         self._setup_processing_stopped = True
@@ -1700,134 +2173,123 @@ class Vision(VisionBase):
                 raw_frame = self.camera_manager._capture_frame()
                 scaled_frame = self.frame_processor._scale_frame(raw_frame)
 
-                # Add crosshairs
+                # Calculate target position
                 h, w = scaled_frame.shape[:2]
                 target_pos = (
                     w // 2,
                     int(h * self.SETUP_TARGET_Y_POSITION_FACTOR),
                 )
 
-                # Draw crosshairs
-                cv.line(
-                    scaled_frame,
-                    (0, target_pos[1]),
-                    (w, target_pos[1]),
-                    self.YELLOW,
-                    1,
-                )
-                cv.line(
-                    scaled_frame,
-                    (target_pos[0], 0),
-                    (target_pos[0], h),
-                    self.YELLOW,
-                    1,
-                )
-
-                # Get latest detection and analyze alignment
+                # Get latest detection
                 with self._setup_lock:
                     detection = self.latest_setup_detection
 
-                # Default instruction text
-                instruction_text = "Align the red and yellow crosses"
-                instruction_color = self.MAGENTA
-
-                if detection is not None:
-                    center, radius, orientation_angle = detection
-
-                    # Calculate position error
-                    pos_error = np.linalg.norm(
-                        np.array(center) - np.array(target_pos)
-                    )
-                    is_position_ok = (
-                        pos_error < self.SETUP_POSITION_TOLERANCE_PX
-                    )
-
-                    # Check angle alignment
-                    is_angle_ok = (
-                        abs(orientation_angle) < self.SETUP_ANGLE_TOLERANCE_DEG
-                    )
-
-                    # Draw a small circle around the cross because cool.
-                    cv.circle(scaled_frame, center, 20, self.BLACK, 1)
-
-                    # Draw orientation line through disk center
-                    self.visualizer._visualize_orientation_cross(
-                        scaled_frame,
-                        center,
-                        radius,
-                        orientation_angle,
-                        is_angle_ok,
-                        is_position_ok,
-                    )
-
-                    # Show the disk perimeter if the position and angle
-                    # are both correct
-                    if is_angle_ok and is_position_ok:
-                        cv.circle(scaled_frame, center, radius, self.GREEN, 3)
-
-                    status_text = f"Orientation: {-orientation_angle:.1f} deg"
-                    cv.putText(
-                        scaled_frame,
-                        status_text,
-                        (20, 40),
-                        cv.FONT_HERSHEY_SIMPLEX,
-                        1.2,
-                        self.WHITE,
-                        2,
-                    )
-
-                    # Update instruction text based on alignment
-                    if is_position_ok and is_angle_ok:
-                        instruction_text = "Press Enter to continue"
-                        instruction_color = self.CYAN
-                    else:
-                        instruction_text = "Align the red and yellow crosses"
-                        instruction_color = self.MAGENTA
-
-                # Add centered instruction text
-                text_size = cv.getTextSize(
-                    instruction_text, cv.FONT_HERSHEY_SIMPLEX, 2, 3
-                )[0]
-                text_x = (w - text_size[0]) // 2
-                text_y = h // 4
-
-                cv.putText(
-                    scaled_frame,
-                    instruction_text,
-                    (text_x, text_y),
-                    cv.FONT_HERSHEY_SIMPLEX,
-                    2,
-                    instruction_color,
-                    3,
-                )
-
-                # Add text to tell user to press 'q' to exit
-                h, w = scaled_frame.shape[:2]
-                exit_text = "Press 'q' to terminate program"
-                text_size = cv.getTextSize(
-                    exit_text, cv.FONT_HERSHEY_SIMPLEX, 1.2, 3
-                )[0]
-                text_x = w - text_size[0] - 20
-                text_y = 50
-
-                cv.putText(
-                    scaled_frame,
-                    exit_text,
-                    (text_x, text_y),
-                    cv.FONT_HERSHEY_SIMPLEX,
-                    1.2,
-                    self.RED,
-                    3,
+                # Use visualizer to create the display frame
+                display_frame = self.visualizer.visualize_position_setup_frame(
+                    scaled_frame, detection, target_pos
                 )
 
                 # Update shared frame atomically
                 with self._setup_lock:
-                    self.latest_setup_frame = scaled_frame
+                    self.latest_setup_frame = display_frame
 
             except VisionConnectionError:
                 time.sleep(0.1)
 
-    def _run_interactive_setup(self):
+    def _run_height_setup(self):
+        """
+        Interactive camera height setup to achieve target disk radius.
+        """
+
+        while not self.camera_manager.stopped:
+            try:
+                # Get frame and detect disk
+                raw_frame = self.camera_manager._capture_frame()
+                scaled_frame = self.frame_processor._scale_frame(raw_frame)
+
+                # Create display frame
+                display_frame = scaled_frame.copy()
+
+                try:
+                    center, radius = self.object_detector._detect_disk(
+                        scaled_frame
+                    )
+
+                    # Calculate how far from optimal
+                    radius_error = abs(radius - self.SCALED_DISK_RADIUS)
+                    is_radius_ok = radius_error <= self.RADIUS_TOLERANCE
+                    is_radius_close = radius_error <= (
+                        self.RADIUS_TOLERANCE * 2
+                    )
+
+                    # Choose colors and messages based on radius status
+                    if is_radius_ok:
+                        status_color = self.GREEN
+                        instruction_text = ""  # Empty - will use _draw_enter_instruction instead
+                        instruction_color = self.CYAN
+                    elif is_radius_close:
+                        status_color = self.YELLOW
+                        instruction_text = "Adjust height slightly"
+                        instruction_color = self.YELLOW
+                    else:
+                        status_color = self.RED
+                        instruction_color = self.RED
+                        if radius < self.SCALED_DISK_RADIUS:
+                            instruction_text = (
+                                "Move camera DOWN (closer to disk)"
+                            )
+                        else:
+                            instruction_text = (
+                                "Move camera UP (further from disk)"
+                            )
+
+                    # Use visualizer to create the display frame
+                    display_frame = (
+                        self.visualizer.visualize_height_setup_frame(
+                            scaled_frame,
+                            radius,
+                            center,
+                            status_color,
+                            instruction_text,
+                            instruction_color,
+                            is_radius_ok,
+                        )
+                    )
+
+                except VisionDetectionError:
+                    display_frame = (
+                        self.visualizer.visualize_height_setup_no_disk(
+                            scaled_frame
+                        )
+                    )
+                    is_radius_ok = False
+
+                # Display the frame
+                cv.imshow(self.HEIGHT_SETUP_WINDOW_NAME, display_frame)
+
+                # Handle user input
+                key = cv.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    cv.destroyAllWindows()
+                    raise VisionSetupCancelledError(
+                        "User requested program exit during height setup"
+                    )
+                elif key == 13:  # Enter key
+                    if is_radius_ok:
+                        cv.destroyAllWindows()
+                        print("Height setup complete!")
+                        break
+                    else:
+                        print(
+                            f"Radius not within acceptable range (±{self.RADIUS_TOLERANCE} pixels). Please adjust height."
+                        )
+
+            except VisionConnectionError:
+                time.sleep(0.1)
+
+        cv.destroyAllWindows()
+
+    def _run_position_setup(self):
         """
         TODO
         """
@@ -1847,7 +2309,7 @@ class Vision(VisionBase):
             if key == ord("q"):
                 cv.destroyAllWindows()
                 raise VisionSetupCancelledError(
-                    "User requested program exit during setup"
+                    "User requested program exit during positioning setup"
                 )
             elif key == 13:  # Enter key
                 # Check if alignment is good before allowing continuation
@@ -1871,9 +2333,22 @@ class Vision(VisionBase):
 
                     if is_position_ok and is_angle_ok:
                         cv.destroyAllWindows()
+                        print("Positioning setup complete!")
                         break  # Exit the setup loop to continue
+                    else:
+                        print(
+                            "Position/orientation not aligned. Please adjust."
+                        )
 
         cv.destroyAllWindows()
+
+    def _run_setup(self):
+        """
+        TODO
+        """
+
+        self._run_height_setup()
+        self._run_position_setup()
 
     # Main loop functions------------------------------------------------------
 
@@ -1973,22 +2448,13 @@ class Vision(VisionBase):
 
                 # Conditional visualization based on parameter
                 if self.enable_visualization:
-                    vis_frame = processed_frame.copy()
-                    vis_frame = self.visualizer._visualize_disk(
-                        vis_frame, disk_center, disk_radius
+                    output_frame = self.visualizer.visualize_complete_scene(
+                        processed_frame,
+                        disk_center,
+                        disk_radius,
+                        robot_data,
+                        rocks_data,
                     )
-                    if robot_data:
-                        vis_frame = self.visualizer._visualize_robot(
-                            vis_frame,
-                            robot_data[0],
-                            robot_data[1],
-                            robot_data[2],
-                        )
-                    if rocks_data:
-                        vis_frame = self.visualizer._visualize_rocks(
-                            vis_frame, rocks_data
-                        )
-                    output_frame = vis_frame
                 else:
                     # Return the clean processed frame without overlays
                     output_frame = processed_frame
@@ -2008,19 +2474,14 @@ class Vision(VisionBase):
                     try:
                         # Grab a raw frame to draw on
                         raw_frame = self.camera_manager._capture_frame()
-                        error_frame = self.frame_processor._scale_frame(
+                        scaled_frame = self.frame_processor._scale_frame(
                             raw_frame
                         )
-                        cv.putText(
-                            error_frame,
-                            str(e),
-                            (20, 50),
-                            cv.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            (0, 0, 255),
-                            2,
+                        self.latest_processed_frame = (
+                            self.visualizer.visualize_error_frame(
+                                scaled_frame, str(e)
+                            )
                         )
-                        self.latest_processed_frame = error_frame
                         self.latest_detection_results = {}
                     except VisionConnectionError:
                         time.sleep(0.01)
@@ -2048,8 +2509,10 @@ class Vision(VisionBase):
                         time.sleep(0.01)
                         continue
 
-                # Add status information to the frame
-                self._add_status_overlay(display_frame, results)
+                # Create the display frame with status overlay
+                display_frame = self.visualizer.visualize_main_display_frame(
+                    display_frame, results
+                )
 
                 # Display the frame
                 cv.imshow(self.MAIN_DISPLAY_WINDOW_NAME, display_frame)
@@ -2068,47 +2531,6 @@ class Vision(VisionBase):
                 time.sleep(0.1)
 
         cv.destroyAllWindows()
-
-    # TODO fix to make work.
-    def _add_status_overlay(self, frame: np.ndarray, results: dict) -> None:
-        """
-        Add status information overlay to the display frame.
-        """
-        h, w = frame.shape[:2]
-
-        # Add frame rate or detection count
-        robot_status = "✓" if results.get("robot") else "✗"
-        rock_count = len(results.get("rocks", []))
-
-        status_text = f"Robot: {robot_status} | Rocks: {rock_count}"
-
-        # Add semi-transparent background for text
-        overlay = frame.copy()
-        cv.rectangle(overlay, (10, 10), (300, 50), self.BLACK, -1)
-        cv.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-
-        # Add the status text
-        cv.putText(
-            frame,
-            status_text,
-            (20, 35),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            self.WHITE,
-            2,
-        )
-
-        # Add exit instruction
-        exit_text = "Press 'q' in this window to close display"
-        cv.putText(
-            frame,
-            exit_text,
-            (20, h - 20),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            self.YELLOW,
-            1,
-        )
 
     # Public Interface --------------------------------------------------------
 
@@ -2330,7 +2752,7 @@ class VisionSetupCancelledError(VisionError):
 if __name__ == "__main__":
     with Vision(
         enable_visualization=True,
-        frame_scale_factor=0.6,
+        frame_scale_factor=1,
         calibration_debug=False,
     ) as vis:
         # vis.detect_disk(True)
