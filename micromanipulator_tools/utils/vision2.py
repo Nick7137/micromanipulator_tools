@@ -1411,6 +1411,7 @@ class Vision(VisionBase):
 
         # Thread 1 (Camera I/O) starts here
         self.camera_manager = ThreadingCameraManager(self.camera_index)
+
         self.calibration_manager = CalibrationManager(calibration_debug)
         self.frame_processor = FrameProcessor(
             self.frame_scale_factor,
@@ -1420,7 +1421,34 @@ class Vision(VisionBase):
         self.object_detector = ObjectDetector(frame_scale_factor)
         self.visualizer = Visualizer()
 
+        # Implement threading for the interactive setup.
+        self._setup_lock = threading.Lock()
+        self._setup_processing_stopped = False
+        self.latest_setup_frame: Optional[np.ndarray] = None
+        self.latest_setup_detection: Optional[tuple] = None
+
+        # Start the setup processing thread
+        self._setup_thread = threading.Thread(
+            target=self._setup_processing_loop
+        )
+        self._setup_thread.daemon = True
+        self._setup_thread.start()
+
+        # Start the setup display thread
+        self._setup_display_thread = threading.Thread(
+            target=self._setup_display_loop
+        )
+        self._setup_display_thread.daemon = True
+        self._setup_display_thread.start()
+
         self._run_interactive_setup()
+
+        # Stop both setup threads
+        self._setup_processing_stopped = True
+        if self._setup_thread:
+            self._setup_thread.join()
+        if self._setup_display_thread:
+            self._setup_display_thread.join()
 
         self._stable_disk_center: Optional[Tuple[int, int]] = None
         self._stable_straightened_disk_center: Optional[Tuple[int, int]] = None
@@ -1500,140 +1528,110 @@ class Vision(VisionBase):
                 f"FATAL: Failed to restart threads: {e}"
             ) from e
 
-    def _run_interactive_setup(self):
+    def _setup_processing_loop(self):
         """
-        TODO
+        Background thread for setup detection processing.
         """
-
-        print("\n--- Starting Interactive Disk Setup ---")
-        print(
-            "Align the disk with the yellow target lines. "
-            "Indicators will turn green."
-        )
-        print("Press 'Enter' to confirm when ready, or 'q' to exit.")
-
-        while not self.camera_manager.stopped:
-            is_setup_ok = False
-            instructions = []
-            vis_frame = None
-
+        while not self._setup_processing_stopped:
             try:
                 raw_frame = self.camera_manager._capture_frame()
-                vis_frame = self.frame_processor._scale_frame(raw_frame)
-                h, w = vis_frame.shape[:2]
+                scaled_frame = self.frame_processor._scale_frame(raw_frame)
 
-                # Define the target position and draw full-screen crosshairs
+                # Try to detect disk
+                try:
+                    center, radius = self.object_detector._detect_disk(
+                        scaled_frame
+                    )
+                    detection_result = (center, radius)
+                except (VisionDetectionError, TypeError):
+                    detection_result = None
+
+                # Update shared detection result atomically
+                with self._setup_lock:
+                    self.latest_setup_detection = detection_result
+
+            except VisionConnectionError:
+                time.sleep(0.1)
+
+    def _setup_display_loop(self):
+        """
+        Background thread for setup frame display with color-coded feedback.
+        """
+        while not self._setup_processing_stopped:
+            try:
+                raw_frame = self.camera_manager._capture_frame()
+                scaled_frame = self.frame_processor._scale_frame(raw_frame)
+
+                # Add crosshairs
+                h, w = scaled_frame.shape[:2]
                 target_pos = (
                     w // 2,
                     int(h * self.SETUP_TARGET_Y_POSITION_FACTOR),
                 )
-                # Horizontal line spanning the full width of the frame
+
+                # Draw crosshairs
                 cv.line(
-                    vis_frame,
+                    scaled_frame,
                     (0, target_pos[1]),
                     (w, target_pos[1]),
                     self.YELLOW,
                     1,
                 )
-                # Vertical line spanning the full height of the frame
                 cv.line(
-                    vis_frame,
+                    scaled_frame,
                     (target_pos[0], 0),
                     (target_pos[0], h),
                     self.YELLOW,
                     1,
                 )
-                # <<< END MODIFIED SECTION >>>
 
-                # --- Detection ---
-                center, radius = self.object_detector._detect_disk(vis_frame)
-                angle = self.frame_processor._detect_orientation_angle_error(
-                    vis_frame
-                )
+                # Get latest detection and analyze alignment
+                with self._setup_lock:
+                    detection = self.latest_setup_detection
 
-                # --- Check Conditions ---
-                pos_error = np.linalg.norm(
-                    np.array(center) - np.array(target_pos)
-                )
-                is_position_ok = pos_error < self.SETUP_POSITION_TOLERANCE_PX
-                is_angle_ok = abs(angle) < self.SETUP_ANGLE_TOLERANCE_DEG
+                if detection is not None:
+                    center, radius = detection
 
-                # --- Generate Instructions ---
-                if not is_position_ok:
-                    if center[0] > target_pos[0]:
-                        instructions.append("Move Left")
-                    if center[0] < target_pos[0]:
-                        instructions.append("Move Right")
-                    if center[1] > target_pos[1]:
-                        instructions.append("Move Up")
-                    if center[1] < target_pos[1]:
-                        instructions.append("Move Down")
-                if not is_angle_ok:
-                    if angle > 0:
-                        instructions.append("Rotate CCW")
-                    else:
-                        instructions.append("Rotate CW")
-
-                # --- Determine Feedback Colors ---
-                is_setup_ok = is_position_ok and is_angle_ok
-                outline_color = self.GREEN if is_setup_ok else self.RED
-                position_color = self.GREEN if is_position_ok else self.RED
-                angle_color = self.GREEN if is_angle_ok else self.RED
-
-                if is_setup_ok:
-                    instructions = ["Alignment OK. Press ENTER to continue."]
-
-                # --- Draw Feedback Visuals ---
-                cv.circle(vis_frame, center, radius, outline_color, 3)
-
-                # Define a long vertical line passing through the center
-                pt1_unrotated = (center[0], center[1] - h)  # Point far above
-                pt2_unrotated = (center[0], center[1] + h)  # Point far below
-
-                # Rotate these two endpoints around the center by the detected angle
-                pt1 = self.frame_processor._rotate_point(
-                    pt1_unrotated, center, angle
-                )
-                pt2 = self.frame_processor._rotate_point(
-                    pt2_unrotated, center, angle
-                )
-
-                # Draw the rotated line, which will now span the frame
-                cv.line(vis_frame, pt1, pt2, angle_color, 2)
-
-                # Draw the center point (position status) on top
-                cv.circle(vis_frame, center, 7, position_color, -1)
-                cv.circle(vis_frame, center, 7, self.BLACK, 1)
-
-            except (VisionDetectionError, TypeError):
-                is_setup_ok = False
-                instructions = ["Cannot see disk or line. Place disk in view."]
-
-            # --- Display UI Text and Handle Keys ---
-            if vis_frame is not None:
-                cv.putText(
-                    vis_frame,
-                    "Press 'q' to exit",
-                    (w - 180, 30),
-                    cv.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    self.WHITE,
-                    2,
-                )
-
-                for i, text in enumerate(instructions):
-                    cv.putText(
-                        vis_frame,
-                        text,
-                        (10, 30 + i * 30),
-                        cv.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        self.RED if not is_setup_ok else self.GREEN,
-                        2,
+                    # Calculate position error
+                    pos_error = np.linalg.norm(
+                        np.array(center) - np.array(target_pos)
+                    )
+                    is_position_ok = (
+                        pos_error < self.SETUP_POSITION_TOLERANCE_PX
                     )
 
-                cv.imshow(self.SETUP_WINDOW_NAME, vis_frame)
+                    # Determine colors based on alignment
+                    outline_color = self.GREEN if is_position_ok else self.RED
+                    center_color = self.GREEN if is_position_ok else self.RED
 
+                    # Draw disk with color-coded feedback
+                    cv.circle(scaled_frame, center, radius, outline_color, 3)
+                    cv.circle(scaled_frame, center, 7, center_color, -1)
+                    cv.circle(scaled_frame, center, 7, self.BLACK, 1)
+
+                # Update shared frame atomically
+                with self._setup_lock:
+                    self.latest_setup_frame = scaled_frame
+
+            except VisionConnectionError:
+                time.sleep(0.1)
+
+    def _run_interactive_setup(self):
+        """
+        Simple real-time frame display for debugging.
+        """
+        print("\n--- Starting Simple Frame Display ---")
+        print("Press 'q' to exit.")
+
+        while not self.camera_manager.stopped:
+            # Get the latest frame
+            with self._setup_lock:
+                if self.latest_setup_frame is not None:
+                    display_frame = self.latest_setup_frame.copy()
+                else:
+                    continue
+
+            cv.imshow(self.SETUP_WINDOW_NAME, display_frame)
             key = cv.waitKey(1) & 0xFF
 
             if key == ord("q"):
@@ -1641,12 +1639,6 @@ class Vision(VisionBase):
                 self.camera_manager._cleanup()
                 cv.destroyAllWindows()
                 raise SystemExit("Program exited during setup.")
-
-            if is_setup_ok and key == 13:
-                print(
-                    "--- Disk position confirmed. Continuing with startup... ---\n"
-                )
-                break
 
         cv.destroyAllWindows()
 
