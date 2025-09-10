@@ -15,6 +15,7 @@
 import os
 import glob
 import time
+import keyboard
 import threading
 import cv2 as cv
 import numpy as np
@@ -146,7 +147,7 @@ class VisionBase:
     TEXT_THICKNESS = 1
 
     # -------------------------------------------------------------------------
-    # Interactive Setup Procedure Constants
+    # Setup and Main Procedure Constants
     # -------------------------------------------------------------------------
 
     # Window name for the setup procedure
@@ -160,6 +161,9 @@ class VisionBase:
     # Tolerances for the setup to be considered "OK"
     SETUP_POSITION_TOLERANCE_PX = 5
     SETUP_ANGLE_TOLERANCE_DEG = 0.2
+
+    MAIN_DISPLAY_WINDOW_NAME = "Vision Real-time Detection"
+    DISPLAY_REFRESH_RATE_MS = 30
 
     # -------------------------------------------------------------------------
     # File Path Management
@@ -265,7 +269,6 @@ class ThreadingCameraManager(VisionBase):
 
         # Start the background thread to continuously update the frame.
         self._start_thread()
-        print("ThreadingCameraManager started successfully with fast backend.")
 
     def _configure_camera_properties(self):
         """
@@ -276,15 +279,6 @@ class ThreadingCameraManager(VisionBase):
         self._camera.set(cv.CAP_PROP_FRAME_HEIGHT, self.DEFAULT_CAMERA_HEIGHT)
         self._camera.set(cv.CAP_PROP_AUTOFOCUS, 0)
         self._camera.set(cv.CAP_PROP_FOCUS, self.DEFAULT_FOCUS_LEVEL)
-
-        # Good Practice: Verify the resolution was set correctly.
-        actual_width = self._camera.get(cv.CAP_PROP_FRAME_WIDTH)
-        actual_height = self._camera.get(cv.CAP_PROP_FRAME_HEIGHT)
-        print(
-            f"Attempted to set {self.DEFAULT_CAMERA_WIDTH}x"
-            f"{self.DEFAULT_CAMERA_HEIGHT}. "
-            f"Actual resolution: {int(actual_width)}x{int(actual_height)}"
-        )
 
     def _start_thread(self):
         """
@@ -318,7 +312,6 @@ class ThreadingCameraManager(VisionBase):
 
         # Release the camera resource once the loop has exited
         self._camera.release()
-        print("Camera hardware has been released.")
 
     def _capture_frame(self) -> np.ndarray:
         """
@@ -347,14 +340,13 @@ class ThreadingCameraManager(VisionBase):
         if self.stopped:
             return
 
-        print("Stopping camera thread...")
         self.stopped = True
 
         # Wait for the thread to finish its work (which includes
         # releasing the camera)
         if self._thread is not None:
             self._thread.join()
-        print("Camera thread stopped and cleaned up.")
+            print("Vision: Camera thread terminated.")
 
     def _open_settings_dialog(self):
         """
@@ -1386,6 +1378,110 @@ class Visualizer(VisionBase):
 
         return vis_frame
 
+    def _visualize_orientation_cross(
+        self,
+        frame: np.ndarray,
+        center: Tuple[int, int],
+        radius: int,
+        angle_deg: float,
+        is_angle_ok: bool = False,
+        is_position_ok: bool = False,
+    ) -> None:
+        """
+        TODO
+        """
+        # Get frame dimensions
+        h, w = frame.shape[:2]
+
+        # Choose color based on angle tolerance - RED when bad, GREEN when good
+        line_color = (
+            self.GREEN if (is_angle_ok and is_position_ok) else self.RED
+        )
+
+        # Draw the main orientation line
+        self._draw_line_to_edges(frame, center, angle_deg, line_color, h, w)
+
+        # Draw the perpendicular line (90 degrees offset)
+        perpendicular_angle = angle_deg + 90
+        self._draw_line_to_edges(
+            frame, center, perpendicular_angle, line_color, h, w
+        )
+
+    def _draw_line_to_edges(
+        self,
+        frame: np.ndarray,
+        center: Tuple[int, int],
+        angle_deg: float,
+        color: Tuple[int, int, int],
+        h: int,
+        w: int,
+    ) -> None:
+        """
+        TODO
+        """
+
+        # Convert angle to radians
+        angle_rad = np.radians(angle_deg)
+
+        # Calculate direction vector
+        dx = np.cos(angle_rad)
+        dy = np.sin(angle_rad)
+
+        # Calculate potential intersections with frame boundaries
+        intersections = []
+
+        # Top edge (y = 0)
+        if dy != 0:
+            t = -center[1] / dy
+            x = center[0] + t * dx
+            if 0 <= x <= w:
+                intersections.append((int(x), 0))
+
+        # Bottom edge (y = h)
+        if dy != 0:
+            t = (h - center[1]) / dy
+            x = center[0] + t * dx
+            if 0 <= x <= w:
+                intersections.append((int(x), h))
+
+        # Left edge (x = 0)
+        if dx != 0:
+            t = -center[0] / dx
+            y = center[1] + t * dy
+            if 0 <= y <= h:
+                intersections.append((0, int(y)))
+
+        # Right edge (x = w)
+        if dx != 0:
+            t = (w - center[0]) / dx
+            y = center[1] + t * dy
+            if 0 <= y <= h:
+                intersections.append((w, int(y)))
+
+        # Remove duplicates and sort by distance from center
+        unique_intersections = []
+        for point in intersections:
+            if point not in unique_intersections:
+                unique_intersections.append(point)
+
+        if len(unique_intersections) >= 2:
+            # Sort by distance from center to get the two endpoints
+            unique_intersections.sort(
+                key=lambda p: (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2
+            )
+            start_point = unique_intersections[0]
+            end_point = unique_intersections[-1]
+        else:
+            # Fallback: extend beyond frame if intersection calculation fails
+            line_length = max(w, h)  # Use frame diagonal as max length
+            dx_int = int(line_length * dx)
+            dy_int = int(line_length * dy)
+            start_point = (center[0] - dx_int, center[1] - dy_int)
+            end_point = (center[0] + dx_int, center[1] + dy_int)
+
+        # Draw the orientation line
+        cv.line(frame, start_point, end_point, color, 2, cv.LINE_AA)
+
 
 class Vision(VisionBase):
     """
@@ -1394,6 +1490,7 @@ class Vision(VisionBase):
 
     def __init__(
         self,
+        enable_visualization: bool = True,
         frame_scale_factor: float = None,
         calibration_debug: bool = False,
         camera_index: int = None,
@@ -1408,6 +1505,8 @@ class Vision(VisionBase):
         self.frame_scale_factor = (
             frame_scale_factor or VisionBase.DEFAULT_FRAME_SCALE_FACTOR
         )
+
+        self.enable_visualization = enable_visualization
 
         # Thread 1 (Camera I/O) starts here
         self.camera_manager = ThreadingCameraManager(self.camera_index)
@@ -1470,6 +1569,17 @@ class Vision(VisionBase):
         self.processing_thread.daemon = True
         self.processing_thread.start()
 
+        # Thread 3 (Display) if enable_visualization is true.
+        self._display_stopped = False
+        if self.enable_visualization:
+            self._display_thread = threading.Thread(target=self._display_loop)
+            self._display_thread.daemon = True
+            self._display_thread.start()
+        else:
+            self._display_thread = None
+
+        print("\nVision: Started multithreading.")
+
     def __enter__(self):
         """
         TODO
@@ -1482,10 +1592,18 @@ class Vision(VisionBase):
         TODO
         """
 
+        # Stop processing thread.
         self.processing_stopped = True
         if self.processing_thread:
             self.processing_thread.join()
-        print("Processing thread stopped.")
+            print("Vision: Processing thread terminated.")
+
+        # Stop display thread
+        if self._display_thread:
+            self._display_stopped = True
+            self._display_thread.join()
+            cv.destroyAllWindows()
+            print("Vision: Display thread terminated.")
 
         # Stop the camera manager
         self.camera_manager._cleanup()
@@ -1516,17 +1634,31 @@ class Vision(VisionBase):
         print("Restarting all background threads...")
         try:
             self.camera_manager = ThreadingCameraManager(self.camera_index)
+
+            # Restart processing thread
             self.processing_stopped = False
             self.processing_thread = threading.Thread(
                 target=self._processing_loop
             )
             self.processing_thread.daemon = True
             self.processing_thread.start()
+
+            # Restart display thread if visualization enabled
+            if self.enable_visualization:
+                self._display_stopped = False
+                self._display_thread = threading.Thread(
+                    target=self._display_loop
+                )
+                self._display_thread.daemon = True
+                self._display_thread.start()
+
             print("All threads restarted successfully.")
         except VisionConnectionError as e:
             raise VisionConnectionError(
                 f"FATAL: Failed to restart threads: {e}"
             ) from e
+
+    # Position setup functions-------------------------------------------------
 
     def _setup_processing_loop(self):
         """
@@ -1542,7 +1674,13 @@ class Vision(VisionBase):
                     center, radius = self.object_detector._detect_disk(
                         scaled_frame
                     )
-                    detection_result = (center, radius)
+                    # NEW: Also detect orientation angle
+                    orientation_angle = (
+                        self.frame_processor._detect_orientation_angle_error(
+                            scaled_frame
+                        )
+                    )
+                    detection_result = (center, radius, orientation_angle)
                 except (VisionDetectionError, TypeError):
                     detection_result = None
 
@@ -1589,8 +1727,12 @@ class Vision(VisionBase):
                 with self._setup_lock:
                     detection = self.latest_setup_detection
 
+                # Default instruction text
+                instruction_text = "Align the red and yellow crosses"
+                instruction_color = self.MAGENTA
+
                 if detection is not None:
-                    center, radius = detection
+                    center, radius, orientation_angle = detection
 
                     # Calculate position error
                     pos_error = np.linalg.norm(
@@ -1600,14 +1742,83 @@ class Vision(VisionBase):
                         pos_error < self.SETUP_POSITION_TOLERANCE_PX
                     )
 
-                    # Determine colors based on alignment
-                    outline_color = self.GREEN if is_position_ok else self.RED
-                    center_color = self.GREEN if is_position_ok else self.RED
+                    # Check angle alignment
+                    is_angle_ok = (
+                        abs(orientation_angle) < self.SETUP_ANGLE_TOLERANCE_DEG
+                    )
 
-                    # Draw disk with color-coded feedback
-                    cv.circle(scaled_frame, center, radius, outline_color, 3)
-                    cv.circle(scaled_frame, center, 7, center_color, -1)
-                    cv.circle(scaled_frame, center, 7, self.BLACK, 1)
+                    # Draw a small circle around the cross because cool.
+                    cv.circle(scaled_frame, center, 20, self.BLACK, 1)
+
+                    # Draw orientation line through disk center
+                    self.visualizer._visualize_orientation_cross(
+                        scaled_frame,
+                        center,
+                        radius,
+                        orientation_angle,
+                        is_angle_ok,
+                        is_position_ok,
+                    )
+
+                    # Show the disk perimeter if the position and angle
+                    # are both correct
+                    if is_angle_ok and is_position_ok:
+                        cv.circle(scaled_frame, center, radius, self.GREEN, 3)
+
+                    status_text = f"Orientation: {-orientation_angle:.1f} deg"
+                    cv.putText(
+                        scaled_frame,
+                        status_text,
+                        (20, 40),
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        1.2,
+                        self.WHITE,
+                        2,
+                    )
+
+                    # Update instruction text based on alignment
+                    if is_position_ok and is_angle_ok:
+                        instruction_text = "Press Enter to continue"
+                        instruction_color = self.CYAN
+                    else:
+                        instruction_text = "Align the red and yellow crosses"
+                        instruction_color = self.MAGENTA
+
+                # Add centered instruction text
+                text_size = cv.getTextSize(
+                    instruction_text, cv.FONT_HERSHEY_SIMPLEX, 2, 3
+                )[0]
+                text_x = (w - text_size[0]) // 2
+                text_y = h // 4
+
+                cv.putText(
+                    scaled_frame,
+                    instruction_text,
+                    (text_x, text_y),
+                    cv.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    instruction_color,
+                    3,
+                )
+
+                # Add text to tell user to press 'q' to exit
+                h, w = scaled_frame.shape[:2]
+                exit_text = "Press 'q' to terminate program"
+                text_size = cv.getTextSize(
+                    exit_text, cv.FONT_HERSHEY_SIMPLEX, 1.2, 3
+                )[0]
+                text_x = w - text_size[0] - 20
+                text_y = 50
+
+                cv.putText(
+                    scaled_frame,
+                    exit_text,
+                    (text_x, text_y),
+                    cv.FONT_HERSHEY_SIMPLEX,
+                    1.2,
+                    self.RED,
+                    3,
+                )
 
                 # Update shared frame atomically
                 with self._setup_lock:
@@ -1618,16 +1829,15 @@ class Vision(VisionBase):
 
     def _run_interactive_setup(self):
         """
-        Simple real-time frame display for debugging.
+        TODO
         """
-        print("\n--- Starting Simple Frame Display ---")
-        print("Press 'q' to exit.")
 
         while not self.camera_manager.stopped:
             # Get the latest frame
             with self._setup_lock:
                 if self.latest_setup_frame is not None:
                     display_frame = self.latest_setup_frame.copy()
+                    detection = self.latest_setup_detection
                 else:
                     continue
 
@@ -1635,12 +1845,37 @@ class Vision(VisionBase):
             key = cv.waitKey(1) & 0xFF
 
             if key == ord("q"):
-                print("Setup aborted by user.")
-                self.camera_manager._cleanup()
                 cv.destroyAllWindows()
-                raise SystemExit("Program exited during setup.")
+                raise VisionSetupCancelledError(
+                    "User requested program exit during setup"
+                )
+            elif key == 13:  # Enter key
+                # Check if alignment is good before allowing continuation
+                if detection is not None:
+                    center, radius, orientation_angle = detection
+                    h, w = display_frame.shape[:2]
+                    target_pos = (
+                        w // 2,
+                        int(h * self.SETUP_TARGET_Y_POSITION_FACTOR),
+                    )
+
+                    pos_error = np.linalg.norm(
+                        np.array(center) - np.array(target_pos)
+                    )
+                    is_position_ok = (
+                        pos_error < self.SETUP_POSITION_TOLERANCE_PX
+                    )
+                    is_angle_ok = (
+                        abs(orientation_angle) < self.SETUP_ANGLE_TOLERANCE_DEG
+                    )
+
+                    if is_position_ok and is_angle_ok:
+                        cv.destroyAllWindows()
+                        break  # Exit the setup loop to continue
 
         cv.destroyAllWindows()
+
+    # Main loop functions------------------------------------------------------
 
     def _perform_post_setup_calibration(self):
         """
@@ -1648,7 +1883,8 @@ class Vision(VisionBase):
         """
 
         print(
-            "Vision: Performing startup calibration for stable world frame..."
+            "\nVision: Performing startup calibration for stable world frame. "
+            "Please wait..."
         )
 
         centers_x, centers_y, radii, angles = [], [], [], []
@@ -1704,14 +1940,6 @@ class Vision(VisionBase):
         )
 
         print("\nVision: Startup calibration complete.")
-        print(f"  -> Stable Un-rotated Center: {unrotated_center}")
-        print(
-            f"  -> Stable Orientation Angle: {self._stable_orientation_angle:.2f} degrees"
-        )
-        print(
-            f"  -> Stable STRAIGHTENED Center: {self._stable_straightened_disk_center}"
-        )
-        print(f"  -> Stable Radius: {self._stable_disk_radius} px\n")
 
     def _processing_loop(self):
         """
@@ -1743,23 +1971,31 @@ class Vision(VisionBase):
                     processed_frame, disk_center, disk_radius, robot_contour
                 )
 
-                # Visualize all detections
-                vis_frame = processed_frame.copy()
-                vis_frame = self.visualizer._visualize_disk(
-                    vis_frame, disk_center, disk_radius
-                )
-                if robot_data:
-                    vis_frame = self.visualizer._visualize_robot(
-                        vis_frame, robot_data[0], robot_data[1], robot_data[2]
+                # Conditional visualization based on parameter
+                if self.enable_visualization:
+                    vis_frame = processed_frame.copy()
+                    vis_frame = self.visualizer._visualize_disk(
+                        vis_frame, disk_center, disk_radius
                     )
-                if rocks_data:
-                    vis_frame = self.visualizer._visualize_rocks(
-                        vis_frame, rocks_data
-                    )
+                    if robot_data:
+                        vis_frame = self.visualizer._visualize_robot(
+                            vis_frame,
+                            robot_data[0],
+                            robot_data[1],
+                            robot_data[2],
+                        )
+                    if rocks_data:
+                        vis_frame = self.visualizer._visualize_rocks(
+                            vis_frame, rocks_data
+                        )
+                    output_frame = vis_frame
+                else:
+                    # Return the clean processed frame without overlays
+                    output_frame = processed_frame
 
                 # Atomically update the shared results
                 with self._processing_lock:
-                    self.latest_processed_frame = vis_frame
+                    self.latest_processed_frame = output_frame
                     self.latest_detection_results = {
                         "disk": (disk_center, disk_radius),
                         "robot": robot_data,
@@ -1787,12 +2023,92 @@ class Vision(VisionBase):
                         self.latest_processed_frame = error_frame
                         self.latest_detection_results = {}
                     except VisionConnectionError:
+                        time.sleep(0.01)
                         pass
 
             except VisionConnectionError:
                 # If the camera stream stops, wait for it to come back.
                 time.sleep(0.5)
                 pass
+
+    def _display_loop(self):
+        """
+        TODO
+        """
+        print("\nVision: Starting live feed.")
+
+        while not self._display_stopped and not self.processing_stopped:
+            try:
+                # Get the latest frame (with or without overlays)
+                with self._processing_lock:
+                    if self.latest_processed_frame is not None:
+                        display_frame = self.latest_processed_frame.copy()
+                        results = self.latest_detection_results.copy()
+                    else:
+                        time.sleep(0.01)
+                        continue
+
+                # Add status information to the frame
+                self._add_status_overlay(display_frame, results)
+
+                # Display the frame
+                cv.imshow(self.MAIN_DISPLAY_WINDOW_NAME, display_frame)
+
+                # Check for user input (optional - for closing window)
+                key = cv.waitKey(self.DISPLAY_REFRESH_RATE_MS) & 0xFF
+                if key == ord("q"):
+                    print(
+                        "Display window closed by user. "
+                        "Program is still running!"
+                    )
+                    break
+
+            except Exception as e:
+                print(f"Display thread error: {e}")
+                time.sleep(0.1)
+
+        cv.destroyAllWindows()
+
+    # TODO fix to make work.
+    def _add_status_overlay(self, frame: np.ndarray, results: dict) -> None:
+        """
+        Add status information overlay to the display frame.
+        """
+        h, w = frame.shape[:2]
+
+        # Add frame rate or detection count
+        robot_status = "✓" if results.get("robot") else "✗"
+        rock_count = len(results.get("rocks", []))
+
+        status_text = f"Robot: {robot_status} | Rocks: {rock_count}"
+
+        # Add semi-transparent background for text
+        overlay = frame.copy()
+        cv.rectangle(overlay, (10, 10), (300, 50), self.BLACK, -1)
+        cv.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+        # Add the status text
+        cv.putText(
+            frame,
+            status_text,
+            (20, 35),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            self.WHITE,
+            2,
+        )
+
+        # Add exit instruction
+        exit_text = "Press 'q' in this window to close display"
+        cv.putText(
+            frame,
+            exit_text,
+            (20, h - 20),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            self.YELLOW,
+            1,
+        )
 
     # Public Interface --------------------------------------------------------
 
@@ -1998,8 +2314,25 @@ class VisionDetectionError(VisionError):
         super().__init__(f"ObjectDetector: {message}")
 
 
+class VisionSetupCancelledError(VisionError):
+    """
+    Exception raised when user cancels the setup process.
+
+    This is raised when the user presses 'q' during the interactive setup,
+    indicating they want to exit the program.
+    """
+
+    @tested
+    def __init__(self, message: str = "Setup cancelled by user") -> None:
+        super().__init__(f"Vision: {message}")
+
+
 if __name__ == "__main__":
-    with Vision(frame_scale_factor=1, calibration_debug=False) as vis:
+    with Vision(
+        enable_visualization=True,
+        frame_scale_factor=0.6,
+        calibration_debug=False,
+    ) as vis:
         # vis.detect_disk(True)
         # vis.detect_robot(True)
         # vis.detect_rocks(True)
@@ -2008,26 +2341,17 @@ if __name__ == "__main__":
         # vis.dump_calibration_data()
         # print(vis)
 
-        print(
-            "\nStarting lag-free test with background processing. Press 'q' to quit."
-        )
+        print("\nStarting main program. Press 'e' to quit.")
 
         while True:
             # Get the latest pre-computed frame.
             frame, results = vis.get_latest_output()
 
-            # Check if the processing thread has produced a frame yet
-            if frame is None:
-                print("Waiting for first processed frame...")
-                time.sleep(0.5)
-                continue
-
-            # Display the frame.
-            cv.imshow("Fully Processed Realtime Feed", frame)
-
-            # Handle user input
-            if cv.waitKey(1) & 0xFF == ord("q"):
+            if keyboard.is_pressed("e"):
+                print("'e' key detected, exiting...\n")
                 break
 
-    cv.destroyAllWindows()
-    print("Program finished cleanly.")
+            # Small delay to prevent excessive CPU usage
+            time.sleep(0.01)
+
+    print("Program ended.")
