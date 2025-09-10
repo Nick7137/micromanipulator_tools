@@ -1,8 +1,8 @@
-# TODO implement broad move
-# TODO implement fine adjustments function
-# TODO is robot infocus function and switch the calibration data also
 # TODO only want to rotate one direction to stop backlash?
 # TODO implement big brain algorithm that decides which rock to go for.
+
+# TODO algorithm for homing the device.
+# TODO algorithm, pick rock that is closest to the purple arc, if far put it on purple line, otherwise go grab it near enough go grab it
 
 import os
 import sys

@@ -177,6 +177,11 @@ class VisionBase:
     ROBOT_ARC_MAX_SCALE = CENTRAL_ARC_SCALE - 1.6
     ROBOT_ARC_RADIUS_SCALE = 2.1
 
+    ROBOT_ARC_START_ANGLE = 244
+    ROBOT_ARC_END_ANGLE = 270
+    END_EFFECTOR_ARC_START_ANGLE = 243.7
+    END_EFFECTOR_ARC_END_ANGLE = 270
+
     # -------------------------------------------------------------------------
     # File Path Management
     # -------------------------------------------------------------------------
@@ -961,6 +966,102 @@ class ObjectDetector(VisionBase):
 
         return rock_data
 
+    def _detect_workspace_arcs(
+        self, disk_center_px: Tuple[int, int], disk_radius_px: int
+    ) -> dict:
+        """
+        TODO
+        """
+
+        # Calculate magenta arc (central workspace)
+        end_effector_radius_px = int(disk_radius_px * self.CENTRAL_ARC_SCALE)
+        end_effector_center = (
+            disk_center_px[0],
+            disk_center_px[1] + end_effector_radius_px,
+        )
+
+        # Calculate red arc (robot workspace)
+        robot_top_y = int(
+            disk_center_px[1] + disk_radius_px * self.ROBOT_ARC_MAX_SCALE
+        )
+        robot_radius_px = int(disk_radius_px * self.ROBOT_ARC_RADIUS_SCALE)
+        robot_center = (disk_center_px[0], robot_top_y + robot_radius_px)
+
+        # Calculate endpoint coordinates for the robot arc
+        robot_end_start_x = int(
+            robot_center[0]
+            + robot_radius_px * np.cos(np.radians(self.ROBOT_ARC_START_ANGLE))
+        )
+        robot_end_start_y = int(
+            robot_center[1]
+            + robot_radius_px * np.sin(np.radians(self.ROBOT_ARC_START_ANGLE))
+        )
+        robot_end_end_x = int(
+            robot_center[0]
+            + robot_radius_px * np.cos(np.radians(self.ROBOT_ARC_END_ANGLE))
+        )
+        robot_end_end_y = int(
+            robot_center[1]
+            + robot_radius_px * np.sin(np.radians(self.ROBOT_ARC_END_ANGLE))
+        )
+
+        # Calculate endpoint coordinates for the end effector arc
+        end_effector_end_start_x = int(
+            end_effector_center[0]
+            + end_effector_radius_px
+            * np.cos(np.radians(self.END_EFFECTOR_ARC_START_ANGLE))
+        )
+        end_effector_end_start_y = int(
+            end_effector_center[1]
+            + end_effector_radius_px
+            * np.sin(np.radians(self.END_EFFECTOR_ARC_START_ANGLE))
+        )
+        end_effector_end_end_x = int(
+            end_effector_center[0]
+            + end_effector_radius_px
+            * np.cos(np.radians(self.END_EFFECTOR_ARC_END_ANGLE))
+        )
+        end_effector_end_end_y = int(
+            end_effector_center[1]
+            + end_effector_radius_px
+            * np.sin(np.radians(self.END_EFFECTOR_ARC_END_ANGLE))
+        )
+
+        return {
+            "end_effector_arc": {
+                "center": end_effector_center,
+                "radius": end_effector_radius_px,
+                "start_angle": self.END_EFFECTOR_ARC_START_ANGLE,
+                "end_angle": self.END_EFFECTOR_ARC_END_ANGLE,
+            },
+            "robot_arc": {
+                "center": robot_center,
+                "radius": robot_radius_px,
+                "start_angle": self.ROBOT_ARC_START_ANGLE,
+                "end_angle": self.ROBOT_ARC_END_ANGLE,
+            },
+            "robot_endpoint_dots": [
+                (
+                    robot_end_start_x,
+                    robot_end_start_y,
+                ),
+                (
+                    robot_end_end_x,
+                    robot_end_end_y,
+                ),
+            ],
+            "end_effector_endpoint_dots": [
+                (
+                    end_effector_end_start_x,
+                    end_effector_end_start_y,
+                ),
+                (
+                    end_effector_end_end_x,
+                    end_effector_end_end_y,
+                ),
+            ],
+        }
+
     # _detect_robot helper functions ------------------------------------------
 
     def _create_robot_head_mask(self, frame: np.ndarray) -> np.ndarray:
@@ -1398,60 +1499,52 @@ class Visualizer(VisionBase):
     def _visualize_workspace_arc(
         self,
         frame: np.ndarray,
-        disk_center_px: Tuple[int, int],
-        disk_radius_px: int,
+        workspace_arcs: dict,
     ) -> np.ndarray:
         """
-        TODO
+        Draw workspace arcs using pre-calculated geometry data.
         """
-
         vis_frame = frame.copy()
 
-        # Calculate workspace radius in pixels
-        scaling = self.CENTRAL_ARC_SCALE
-        workspace_radius_px = int(disk_radius_px * scaling)
+        # Get the arc data with updated names
+        end_effector_arc = workspace_arcs["end_effector_arc"]
+        robot_arc = workspace_arcs["robot_arc"]
+        robot_endpoint_dots = workspace_arcs["robot_endpoint_dots"]
+        end_effector_endpoint_dots = workspace_arcs[
+            "end_effector_endpoint_dots"
+        ]
 
-        # Calculate the arc center so the top of the arc touches the disk center
-        # Arc center = disk center + workspace_radius downward
-        arc_center_x = disk_center_px[0]
-        arc_center_y = disk_center_px[1] + workspace_radius_px
-        arc_center = (arc_center_x, arc_center_y)
-
-        # Draw the main workspace arc (bottom semicircle - 180 to 360 degrees)
+        # Draw the magenta arc (end effector)
         cv.ellipse(
             vis_frame,
-            arc_center,
-            (workspace_radius_px, workspace_radius_px),
+            end_effector_arc["center"],
+            (end_effector_arc["radius"], end_effector_arc["radius"]),
             0,  # rotation angle
-            242.5,  # start angle (degrees) - bottom left
-            270,  # end angle (degrees) - bottom right
+            end_effector_arc["start_angle"],
+            end_effector_arc["end_angle"],
             self.MAGENTA,
             2,  # thickness
         )
 
-        # Draw the red arc with larger radius but same top position
-        # First calculate where the top of the current red arc is
-        current_red_top_y = int(
-            disk_center_px[1] + disk_radius_px * self.ROBOT_ARC_MAX_SCALE
-        )  # This is where the top currently is
-
-        new_red_radius_px = int(disk_radius_px * self.ROBOT_ARC_RADIUS_SCALE)
-
-        # Calculate the new center so the top stays at the same position
-        red_arc_center_x = disk_center_px[0]
-        red_arc_center_y = current_red_top_y + new_red_radius_px
-        red_arc_center = (red_arc_center_x, red_arc_center_y)
-
+        # Draw the red arc (robot)
         cv.ellipse(
             vis_frame,
-            red_arc_center,
-            (new_red_radius_px, new_red_radius_px),
+            robot_arc["center"],
+            (robot_arc["radius"], robot_arc["radius"]),
             0,  # rotation angle
-            240,  # start angle (degrees) - bottom left
-            270,  # end angle (degrees) - bottom right
-            self.RED,
+            robot_arc["start_angle"],
+            robot_arc["end_angle"],
+            self.YELLOW,
             2,  # thickness
         )
+
+        # Draw robot endpoint dots
+        for dot_pos in robot_endpoint_dots:
+            cv.circle(vis_frame, dot_pos, 4, self.RED, -1)
+
+        # Draw end effector endpoint dots
+        for dot_pos in end_effector_endpoint_dots:
+            cv.circle(vis_frame, dot_pos, 4, self.MAGENTA, -1)
 
         return vis_frame
 
@@ -1921,6 +2014,7 @@ class Visualizer(VisionBase):
         frame: np.ndarray,
         disk_center: Tuple[int, int],
         disk_radius: int,
+        workspace_arcs: dict,
         robot_data: Optional[tuple] = None,
         rocks_data: Optional[List[dict]] = None,
     ) -> np.ndarray:
@@ -1932,20 +2026,18 @@ class Visualizer(VisionBase):
         # Always visualize the disk
         vis_frame = self._visualize_disk(vis_frame, disk_center, disk_radius)
 
+        # Visualize rocks if detected
+        if rocks_data:
+            vis_frame = self._visualize_rocks(vis_frame, rocks_data)
+
         # Visualize workspace arc
-        vis_frame = self._visualize_workspace_arc(
-            vis_frame, disk_center, disk_radius
-        )
+        vis_frame = self._visualize_workspace_arc(vis_frame, workspace_arcs)
 
         # Visualize robot if detected
         if robot_data:
             vis_frame = self._visualize_robot(
                 vis_frame, robot_data[0], robot_data[1], robot_data[2]
             )
-
-        # Visualize rocks if detected
-        if rocks_data:
-            vis_frame = self._visualize_rocks(vis_frame, rocks_data)
 
         return vis_frame
 
@@ -2418,6 +2510,13 @@ class Vision(VisionBase):
             )
         )
 
+        # Calculate static workspace arcs geometry once
+        self._stable_workspace_arcs = (
+            self.object_detector._detect_workspace_arcs(
+                self._stable_straightened_disk_center, self._stable_disk_radius
+            )
+        )
+
         print("\nVision: Startup calibration complete.")
 
     def _processing_loop(self):
@@ -2439,6 +2538,7 @@ class Vision(VisionBase):
 
                 disk_center = self._stable_straightened_disk_center
                 disk_radius = self._stable_disk_radius
+                workspace_arcs = self._stable_workspace_arcs
 
                 robot_data = self.object_detector._detect_robot(
                     processed_frame, disk_center, disk_radius
@@ -2456,6 +2556,7 @@ class Vision(VisionBase):
                         processed_frame,
                         disk_center,
                         disk_radius,
+                        workspace_arcs,
                         robot_data,
                         rocks_data,
                     )
@@ -2470,6 +2571,7 @@ class Vision(VisionBase):
                         "disk": (disk_center, disk_radius),
                         "robot": robot_data,
                         "rocks": rocks_data,
+                        "workspace_arcs": workspace_arcs,
                     }
 
             except VisionDetectionError as e:
@@ -2634,8 +2736,11 @@ class Vision(VisionBase):
         with self._processing_lock:
             return self.latest_detection_results.get("rocks")
 
-    def detect_workspace(self):
-        pass
+    def detect_workspace_arcs(self):
+        """
+        Get the static workspace arc geometry data.
+        """
+        return getattr(self, "_stable_workspace_arcs", None)
 
     def get_latest_output(self) -> Tuple[Optional[np.ndarray], dict]:
         """
@@ -2758,7 +2863,7 @@ import keyboard
 if __name__ == "__main__":
     with Vision(
         enable_visualization=True,
-        frame_scale_factor=1,
+        frame_scale_factor=0.8,
         calibration_debug=False,
     ) as vis:
         while True:
