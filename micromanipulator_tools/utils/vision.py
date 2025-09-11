@@ -119,9 +119,6 @@ class VisionBase:
     ROBOT_HEAD_MIN_AREA = 500
     ROBOT_HEAD_APPROX_EPSILON = 0.02
 
-    ROBOT_TWEEZER_HEIGHT_FACTOR = 1.15
-    ROBOT_TWEEZER_BASE_WIDTH_FACTOR = 0.5
-
     # Rock detection (dark objects on light background)
     ROCK_GRAY_UPPER_THRESHOLD = 100
     ROCK_MIN_AREA_PIXELS = 20
@@ -181,6 +178,10 @@ class VisionBase:
     ROBOT_ARC_END_ANGLE = 270
     END_EFFECTOR_ARC_START_ANGLE = 243.7
     END_EFFECTOR_ARC_END_ANGLE = 270
+
+    ROBOT_TWEEZER_HEIGHT_FACTOR = 1.22
+    ROBOT_TWEEZER_TIP_WIDTH_FACTOR = 0.35
+    ROBOT_HEAD_MASK_OFFSET_PX = 10
 
     # -------------------------------------------------------------------------
     # File Path Management
@@ -896,7 +897,7 @@ class ObjectDetector(VisionBase):
         # Generate the full body contour for visualization
         head_rect = cv.minAreaRect(head_contour)
         link_rect = self._find_prismatic_link_rect(head_rect)
-        tweezer_points = self._get_tweezer_triangle_points(head_rect)
+        tweezer_points = self._get_tweezer_trapezium_points(head_rect)
 
         body_contour = self._get_robot_body_contour(
             frame.shape, head_rect, link_rect, tweezer_points
@@ -1111,44 +1112,60 @@ class ObjectDetector(VisionBase):
         # Return the contour with the largest area
         return max(valid_contours, key=lambda x: x[1])[0]
 
-    def _get_tweezer_triangle_points(self, head_rect: Tuple) -> np.ndarray:
+    def _get_tweezer_trapezium_points(self, head_rect: Tuple) -> np.ndarray:
         """
         TODO
         """
+
         head_center, (head_width, head_height), head_angle_deg = head_rect
 
-        # Standardize the angle from minAreaRect to a predictable 0-360
-        # range.
+        # --- START: Logic Copied from _find_prismatic_link_rect ---
+        # This normalization MUST be identical to the link function's logic.
         if head_width < head_height:
-            # If width is less than height, OpenCV's angle is along the
-            # longer side. We want the angle of the shorter side
-            # (the top/bottom).
-            head_angle_deg += 90
+            # Note: The link function subtracts 90, here we add it to make
+            # the local coordinate system consistent for our purpose.
+            # The key is that the resulting angle's sign is predictable.
+            # Let's stick to the original for perfect mirroring.
+            head_angle_deg -= 90
+        # --- END: Logic Copied ---
 
-        # Define tweezer geometry based on head size and constants
-        tweezer_tip_height = head_height * self.ROBOT_TWEEZER_HEIGHT_FACTOR
-        tweezer_base_width = head_width * self.ROBOT_TWEEZER_BASE_WIDTH_FACTOR
+        # Standardize dimensions for local coordinate calculations
+        if head_width < head_height:
+            width, height = head_height, head_width
+        else:
+            width, height = head_width, head_height
 
-        # Define the triangle's points in a local, unrotated coordinate
-        # system centered on the head, where +Y is down.
-        # The base is on the "top" edge of the head's bounding box.
-        # The tip is further "up" (negative Y).
-        local_p_base_left = (-tweezer_base_width / 2, -head_height / 2)
-        local_p_base_right = (tweezer_base_width / 2, -head_height / 2)
-        local_p_tip = (0, -head_height / 2 - tweezer_tip_height)
+        # Define geometry relative to the head's dimensions
+        tweezer_h = height * self.ROBOT_TWEEZER_HEIGHT_FACTOR
+        base_w = width
+        tip_w = width * self.ROBOT_TWEEZER_TIP_WIDTH_FACTOR
+
+        # The link function effectively places the link on the "positive" side
+        # of its complex logic. We will do the opposite and place the tweezers
+        # on the "negative" side of the head's local coordinate system.
+        # This places them at the "front" of the robot.
+        y_base = -height / 2
+        y_tip = y_base - tweezer_h
 
         local_points = np.array(
-            [local_p_base_left, local_p_base_right, local_p_tip]
+            [
+                [-base_w / 2, y_base],
+                [base_w / 2, y_base],
+                [tip_w / 2, y_tip],
+                [-tip_w / 2, y_tip],
+            ],
+            dtype=np.float32,
         )
 
-        # Create the 2D rotation matrix
-        angle_rad = np.radians(head_angle_deg)
-        c, s = np.cos(angle_rad), np.sin(angle_rad)
-        rotation_matrix = np.array(((c, -s), (s, c)))
+        # Use the original, non-normalized angle for the final rotation
+        # to match the visual orientation from minAreaRect.
+        original_angle_deg = head_rect[2]
 
-        # Rotate the local points and then translate them to the head's
-        # center
-        world_points = (rotation_matrix @ local_points.T).T + head_center
+        rad = np.radians(original_angle_deg)
+        c, s = np.cos(rad), np.sin(rad)
+        rot_matrix = np.array([[c, -s], [s, c]])
+
+        world_points = (rot_matrix @ local_points.T).T + head_center
 
         return np.int32(world_points)
 
@@ -1178,6 +1195,7 @@ class ObjectDetector(VisionBase):
         if head_width < head_height:
             head_angle_deg -= 90
 
+        # Calculate link position
         link_offset = head_height
         head_angle_rad = abs(np.radians(head_angle_deg))
 
@@ -1194,7 +1212,8 @@ class ObjectDetector(VisionBase):
         link_center_y = head_center[1] + link_offset * np.cos(head_angle_rad)
         link_center = (link_center_x, link_center_y)
 
-        link_width = head_width * 0.4
+        # Calculate link dimensions
+        link_width = head_width * 0.7
         link_length = head_height * 2
 
         return (link_center, (link_width, link_length), head_angle_deg)
@@ -1210,19 +1229,42 @@ class ObjectDetector(VisionBase):
         TODO
         """
 
-        head_points = np.int32(cv.boxPoints(head_rect))
-        link_points = np.int32(cv.boxPoints(link_rect))
-
-        # Create a mask by drawing both filled polygons
+        # Create a mask by drawing filled shapes
         mask = np.zeros(frame_shape[:2], dtype=np.uint8)
-        cv.fillPoly(mask, [head_points], 255)
+
+        # Deconstruct the original head rectangle
+        head_center, (head_width, head_height), head_angle = head_rect
+
+        # Create a new, larger rectangle for the mask by adding the offset
+        offset = self.ROBOT_HEAD_MASK_OFFSET_PX
+        offset_head_width = head_width + (offset * 2)
+        offset_head_height = head_height + (offset * 2)
+
+        # The new rectangle for the mask has the same center and angle
+        offset_head_rect = (
+            head_center,
+            (offset_head_width, offset_head_height),
+            head_angle,
+        )
+
+        # Get the 4 corner points of this new, larger rectangle
+        offset_head_points = np.int32(cv.boxPoints(offset_head_rect))
+
+        # Draw the head as a filled rectangle
+        cv.fillPoly(mask, [offset_head_points], 255)
+
+        # Draw the prismatic link as a filled rectangle (this is the key part)
+        link_points = np.int32(cv.boxPoints(link_rect))
         cv.fillPoly(mask, [link_points], 255)
+
+        # Draw tweezers
         cv.fillPoly(mask, [tweezer_points], 255)
 
         # Find the single external contour of the combined shape
         contours, _ = cv.findContours(
             mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
         )
+
         return max(contours, key=cv.contourArea)
 
     # TODO fix maybe?

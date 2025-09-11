@@ -44,15 +44,15 @@ def main():
         nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
         nc.change_speed_profile_to(active_speed_profile)
 
-        nc.drive_elbow_joint()
-        time.sleep(RISE_TIME_NO_ROCK_SEC)
-        nc.stop()
+        # nc.drive_elbow_joint()
+        # time.sleep(RISE_TIME_NO_ROCK_SEC)
+        # nc.stop()
 
         # nc.stopnack()
 
         # tt.rotate(60, reverse=False)
 
-        # nc.drive_base_joint()
+        nc.drive_base_joint(reverse=True)
         # nc.drive_elbow_joint()
         # nc.drive_prismatic_joint(reverse=True)
         # nc.drive_tweezers()
@@ -67,7 +67,7 @@ def main():
         #     nc.drive_base_joint(reverse=False)
         #     time.sleep(5)
 
-        # nc.stop()
+        nc.stop()
 
         # vis.detect_disk(True)
         # vis.detect_robot(True)
