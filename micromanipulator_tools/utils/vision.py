@@ -969,6 +969,13 @@ class ObjectDetector(VisionBase):
             }
             rock_data.append(rock_dict)
 
+        # Sort rocks by distance from disk center (closest = Rock 1)
+        rock_data.sort(
+            key=lambda rock: np.linalg.norm(
+                np.array(rock["pixel_centroid"]) - np.array(disk_center)
+            )
+        )
+
         return rock_data
 
     def _detect_workspace_arcs(

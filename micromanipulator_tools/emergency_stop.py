@@ -7,14 +7,12 @@ from micromanipulator_tools import NanoControl
 
 
 def emergency_stop():
-    """Standalone emergency stop script"""
-
     try:
         with NanoControl("COM19") as nc:
             nc.stop()
-            print("✓ NanoControl stopped")
+            print("NanoControl stopped")
     except Exception as e:
-        print(f"✗ Error stopping NanoControl: {e}")
+        print(f"Error stopping NanoControl: {e}")
 
 
 if __name__ == "__main__":

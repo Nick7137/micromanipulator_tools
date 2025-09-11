@@ -1,6 +1,5 @@
 # TODO only want to rotate one direction to stop backlash?
 # TODO implement big brain algorithm that decides which rock to go for.
-
 # TODO algorithm for homing the device.
 # TODO algorithm, pick rock that is closest to the purple arc, if far put it on purple line, otherwise go grab it near enough go grab it
 
@@ -8,6 +7,7 @@ import os
 import sys
 import time
 import math
+import keyboard
 from typing import Tuple
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,7 +30,134 @@ SPEED_PRESETS = {
 # without holding a rock
 RISE_TIME_NO_ROCK_SEC = 3
 
-TOL_PX = 0
+TOL_PX = 2
+ROCK_POS_TOL_ANGLE = 0.5
+TWEEZER_MOVE_TIME_SEC = 6
+TIME_TO_DISK_FROM_LEVEL_SEC = 3.5
+DROP_OFF_ANGLE_THRESHOLD_DEG = 27
+DROP_OFF_EXTRA_TIME_SEC = 3
+
+# -----------------------------------------------------------------------------
+# Setup Functions
+# -----------------------------------------------------------------------------
+
+
+def set_robot_speed(nc: NanoControl):
+    active_speed_profile = 1
+    nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
+    nc.change_speed_profile_to(active_speed_profile)
+
+
+# -----------------------------------------------------------------------------
+# Detection Functions
+# -----------------------------------------------------------------------------
+
+
+def get_current_robot_radius_px(vis: Vision):
+    polar_coords, centroid_px, body_contour = vis.detect_robot()
+    radius, angle = polar_coords
+    return radius
+
+
+def get_current_robot_theta_deg(vis: Vision):
+    polar_coords, centroid_px, body_contour = vis.detect_robot()
+    radius, angle = polar_coords
+    return angle
+
+
+def is_rock_available():
+    pass
+
+
+# -----------------------------------------------------------------------------
+# Movement Functions
+# -----------------------------------------------------------------------------
+
+
+def open_tweezers(nc: NanoControl):
+    nc.drive_tweezers(True)
+    time.sleep(TWEEZER_MOVE_TIME_SEC)
+    nc.stop()
+
+
+def close_tweezers(nc: NanoControl):
+    nc.drive_tweezers(False)
+    time.sleep(TWEEZER_MOVE_TIME_SEC)
+    nc.stop()
+
+
+def level_robot(nc: NanoControl, vis: Vision):
+    """
+    TODO
+    """
+
+    CLOSE_THRESHOLD_PX = TOL_PX * 2  # Define "close enough" to switch modes
+
+    while True:
+        # Get current robot radius and target radius
+        current_radius = get_current_robot_radius_px(vis)
+        workspace_arcs = vis.detect_workspace_arcs()
+        target_radius = workspace_arcs["robot_arc"]["radius"]
+
+        # Calculate the error
+        radius_error = abs(current_radius - target_radius)
+
+        print(
+            f"Current radius: {current_radius:.1f}px, Target: {target_radius:.1f}px, Error: {radius_error:.1f}px"
+        )
+
+        # Check if we've reached the target
+        if radius_error <= TOL_PX:
+            nc.stop()  # Make sure we stop
+            print("Robot leveled successfully!")
+            break
+
+        # Determine direction
+        if current_radius < target_radius:
+            direction_text = "Moving robot down (away from center)"
+            reverse = True
+        else:
+            direction_text = "Moving robot up (toward center)"
+            reverse = False
+
+        # Choose movement strategy based on distance to target
+        if radius_error > CLOSE_THRESHOLD_PX:
+            # Far from target - move continuously
+            print(f"{direction_text} - CONTINUOUS MODE")
+            nc.drive_elbow_joint(reverse=reverse)
+            time.sleep(0.01)  # Short check interval while moving
+            # Don't stop here - keep moving until next iteration
+        else:
+            # Close to target - use precise stop-and-go movements
+            print(f"{direction_text} - PRECISION MODE")
+            nc.drive_elbow_joint(reverse=reverse)
+            time.sleep(0.1)  # Short movement duration for precision
+            nc.stop()
+            time.sleep(0.1)  # Brief pause between movements
+
+
+def touch_disk_from_level(nc: NanoControl):
+    nc.drive_elbow_joint(True)
+    time.sleep(TIME_TO_DISK_FROM_LEVEL_SEC)
+    nc.stop()
+
+
+def move_to_drop_off(nc: NanoControl, vis: Vision):
+    level_robot(nc, vis)
+
+    # Get current robot angle
+    current_angle = get_current_robot_theta_deg(vis)
+
+    # Rotate base joint counter clockwise until reaching threshold
+    while current_angle < DROP_OFF_ANGLE_THRESHOLD_DEG:
+        current_angle = get_current_robot_theta_deg(vis)
+        print(f"current angle: {current_angle}")
+        nc.drive_base_joint()  # Counter clockwise
+
+    # # Continue moving in same direction for some extra time
+    # nc.drive_base_joint()
+    # time.sleep(DROP_OFF_EXTRA_TIME_SEC)
+    nc.stop()
 
 
 def main():
@@ -43,54 +170,9 @@ def main():
             calibration_debug=False,
         ) as vis,
     ):
+        set_robot_speed(nc)
 
-        def get_current_robot_radius():
-            polar_coords, centroid_px, body_contour = vis.detect_robot()
-            radius, angle = polar_coords
-            return radius
-
-        def level_robot():
-            radius = get_current_robot_radius()
-
-            # Get the robot arc radius from vision
-            workspace_arcs = vis.detect_workspace_arcs()
-            robot_arc_radius = workspace_arcs["robot_arc"]["radius"]
-
-            if radius < (robot_arc_radius - TOL_PX):
-                while radius < robot_arc_radius:
-                    radius = get_current_robot_radius()
-                    nc.drive_elbow_joint(reverse=True)
-            elif radius > (robot_arc_radius + TOL_PX):
-                while radius > robot_arc_radius:
-                    radius = get_current_robot_radius()
-                    nc.drive_elbow_joint(reverse=False)
-            else:
-                pass
-
-            nc.stop()
-
-        def go_down_from_level():
-            nc.drive_elbow_joint(True)
-            time.sleep(3.5)
-            nc.stop()
-
-        def open_tweezers():
-            nc.drive_tweezers(True)
-            time.sleep(18)
-            nc.stop()
-
-        def close_tweezers():
-            nc.drive_tweezers(False)
-            time.sleep(18)
-            nc.stop()
-
-        def move_off_disk():
-            # get the desired angle for the robot to move to and then
-            # move there
-
-            pass
-
-        ########################################################
+        # ########################################################
 
         def get_first_rock_coords():
             # Extract first rock coordinates in pixels
@@ -128,9 +210,10 @@ def main():
             rock_position: Tuple[float, float],
             disk_center: Tuple[float, float],
             end_effector_radius: float,
-        ) -> float:
+        ) -> Tuple[float, bool]:
             """
-            TODO
+            Calculate disk rotation angle using the second geometric solution.
+            Returns (angle, reverse) where reverse=True means rotate counterclockwise.
             """
 
             # Vector from disk center to rock
@@ -151,66 +234,71 @@ def main():
                     f"Rock unreachable: distance {distance_to_rock:.1f} > maximum reach {2 * end_effector_radius:.1f}"
                 )
 
-            # Calculate both possible rotations
+            # Use only the second solution
             arcsin_S = math.asin(S)
-            rotation_1 = arcsin_S - rock_angle
-            rotation_2 = math.pi - arcsin_S - rock_angle
+            rotation = math.pi - arcsin_S - rock_angle
 
             # Normalize to [0, 2π) and convert to degrees
-            rotation_1_deg = (rotation_1 % (2 * math.pi)) * 180 / math.pi
-            rotation_2_deg = (rotation_2 % (2 * math.pi)) * 180 / math.pi
+            rotation_deg = (rotation % (2 * math.pi)) * 180 / math.pi
 
-            # Choose the smaller clockwise rotation
-            if rotation_1_deg <= rotation_2_deg:
-                return rotation_1_deg
+            # If rotation is more than 180°, go the other way
+            if rotation_deg > 180:
+                # Calculate the opposite direction
+                rotation_deg = 360 - rotation_deg
+                reverse = True  # Rotate counterclockwise
             else:
-                return rotation_2_deg
+                reverse = False  # Rotate clockwise
 
-        def rotate_to_reach_rock():
-            rock_position = get_first_rock_coords()
-            disk_center = get_disk_centre()
-            arc_radius = get_workspace_arc_radius()
+            return rotation_deg, reverse
 
-            angle_to_rotate = get_disk_rotation_angle(
-                rock_position, disk_center, arc_radius
-            )
+        def rotate_rock_to_pickup_pos():
+            while True:
+                # Get current rock position and calculate rotation needed
+                rock_position = get_first_rock_coords()
+                disk_center = get_disk_centre()
+                arc_radius = get_workspace_arc_radius()
 
-            print(f"angle {angle_to_rotate}")
+                angle_to_rotate, reverse_direction = get_disk_rotation_angle(
+                    rock_position, disk_center, arc_radius
+                )
 
-            tt.rotate(angle_to_rotate)
+                # Check if we're close enough to target
+                if angle_to_rotate <= ROCK_POS_TOL_ANGLE:
+                    break
 
-        active_speed_profile = 1
-        nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
-        nc.change_speed_profile_to(active_speed_profile)
+                # Rotate toward target
+                tt.rotate(angle_to_rotate, reverse=reverse_direction)
 
         # while True:
         #     time.sleep(1)
-        #     rotate_to_reach_rock()
+        #     rotate_rock_to_pickup_pos()
         #     time.sleep(2)
 
+        time.sleep(1)
+
+        while True:
+            level_robot(nc, vis)
+            time.sleep(3)
         # time.sleep(1)
-        # level_robot()
+        # touch_disk_from_level(nc)
         # time.sleep(1)
-        # go_down_from_level()
-        # time.sleep(1)
-        # level_robot()
+        # level_robot(nc, vis)
         # time.sleep(1)
 
-        # open_tweezers()
-        # close_tweezers()
+        move_to_drop_off(nc, vis)
 
-        # while True:
-        #     # Get the latest pre-computed frame.
-        #     frame, results = vis.get_latest_output()
+        while True:
+            # Get the latest pre-computed frame.
+            frame, results = vis.get_latest_output()
 
-        #     if keyboard.is_pressed("e"):
-        #         print("'e' key detected, exiting...\n")
-        #         break
+            if keyboard.is_pressed("e"):
+                print("'e' key detected, exiting...\n")
+                break
 
-        #     # Small delay to prevent excessive CPU usage
-        #     time.sleep(0.01)
+            # Small delay to prevent excessive CPU usage
+            time.sleep(0.01)
 
-        # print("Program ended.")
+        print("Program ended.")
 
 
 if __name__ == "__main__":
