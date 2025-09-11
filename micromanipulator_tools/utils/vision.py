@@ -179,6 +179,8 @@ class VisionBase:
     END_EFFECTOR_ARC_START_ANGLE = 243.7
     END_EFFECTOR_ARC_END_ANGLE = 270
 
+    ROBOT_PRISM_LINK_HEIGHT_FACTOR = 2
+    ROBOT_PRISM_LINK_WIDTH_FACTOR = 0.5
     ROBOT_TWEEZER_HEIGHT_FACTOR = 1.23
     ROBOT_TWEEZER_TIP_WIDTH_FACTOR = 0.2
     ROBOT_HEAD_MASK_OFFSET_PX = 10
@@ -1176,20 +1178,25 @@ class ObjectDetector(VisionBase):
         """
         TODO
         """
-
         head_center, (head_width, head_height), head_angle_deg = head_rect
 
-        # Convert from what cv returns to angles that range from -90 to 90
-        # See: https://stackoverflow.com/questions/15956124/minarearect-angles-unsure-about-the-angle-returned
+        # Apply the same normalization logic as the tweezers function
+        normalized_angle = head_angle_deg
+        width_for_calc = head_width
+        height_for_calc = head_height
+
         if head_width < head_height:
-            head_angle_deg -= 90
+            normalized_angle = head_angle_deg - 90
+            # When we adjust the angle, we also need to swap dimensions
+            width_for_calc = head_height
+            height_for_calc = head_width
 
-        # Calculate link position
-        link_offset = head_height
-        head_angle_rad = abs(np.radians(head_angle_deg))
+        # Calculate link position using normalized values
+        link_offset = height_for_calc
+        head_angle_rad = abs(np.radians(normalized_angle))
 
-        # Determine link center based on head angle
-        if head_angle_deg <= 0:
+        # Determine link center based on normalized angle
+        if normalized_angle <= 0:
             link_center_x = head_center[0] + link_offset * np.sin(
                 head_angle_rad
             )
@@ -1201,11 +1208,12 @@ class ObjectDetector(VisionBase):
         link_center_y = head_center[1] + link_offset * np.cos(head_angle_rad)
         link_center = (link_center_x, link_center_y)
 
-        # Calculate link dimensions
-        link_width = head_width * 0.7
-        link_length = head_height * 2
+        # Calculate link dimensions using normalized values
+        link_width = width_for_calc * self.ROBOT_PRISM_LINK_WIDTH_FACTOR
+        link_length = height_for_calc * self.ROBOT_PRISM_LINK_HEIGHT_FACTOR
 
-        return (link_center, (link_width, link_length), head_angle_deg)
+        # Return with the normalized angle
+        return (link_center, (link_width, link_length), normalized_angle)
 
     def _get_robot_body_contour(
         self,
