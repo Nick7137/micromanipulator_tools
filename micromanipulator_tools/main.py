@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import math
+import keyboard
 from typing import Tuple
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -44,7 +45,82 @@ def set_robot_speed(nc: NanoControl):
     nc.change_speed_profile_to(active_speed_profile)
 
 
+def run_angle_mapping(nc: NanoControl, vis: Vision):
+    pass
+
+
+def run_angle_calibration(nc: NanoControl, vis: Vision):
+    calibration_data = []
+
+    print("Starting angle calibration procedure...")
+    print(
+        "Move the robot to each marker and press 'Space' to capture the position."
+    )
+    print("Press 'Q' to finish calibration.")
+
+    while True:
+        # Wait for user input
+        if keyboard.is_pressed("space"):
+            # Get current centre arc angle
+            workspace_arcs = vis.detect_workspace_arcs()
+            centre_arc_markers = workspace_arcs["calibration_markers"]
+            current_marker_index = len(calibration_data)
+
+            if current_marker_index >= len(centre_arc_markers["angles"]):
+                print("All markers calibrated. Press 'Q' to finish.")
+                continue
+
+            centre_angle = centre_arc_markers["angles"][current_marker_index]
+
+            # Level the robot
+            level_robot(nc, vis)
+
+            # Get robot angle
+            robot_angle = get_current_robot_theta_deg(vis)
+
+            # Store calibration point
+            calibration_data.append((centre_angle, robot_angle))
+            print(
+                f"Calibration point captured: Centre angle {centre_angle}, Robot angle {robot_angle}"
+            )
+
+            # Touch down then raise ever so slightly so we can rotate base
+            touch_disk_from_level(nc)
+            nc.drive_elbow_joint()
+            nc.stop()
+
+            # Wait for key release to avoid multiple captures
+            keyboard.wait("space", release=True)
+
+        elif keyboard.is_pressed("q"):
+            print("Calibration cancelled. Discarding data.")
+            return None  # Return None to indicate calibration was cancelled
+
+        elif keyboard.is_pressed("enter"):
+            if len(calibration_data) < len(vis.CALIBRATION_MARKER_ANGLES):
+                print(
+                    f"Warning: Only {len(calibration_data)} out of {len(vis.CALIBRATION_MARKER_ANGLES)} points calibrated."
+                )
+                print(
+                    "Press 'Enter' again to confirm saving incomplete calibration, or continue calibrating."
+                )
+                keyboard.wait("enter", release=True)  # Wait for key release
+                if not keyboard.is_pressed("enter"):
+                    continue  # If Enter is not pressed again, continue calibration
+            break  # Exit the loop and return the calibration data
+
+        time.sleep(0.1)
+
+    print("Calibration finished. Calibration data:")
+    for centre, robot in calibration_data:
+        print(f"Centre: {centre:.2f}, Robot: {robot:.2f}")
+
+    # TODO: Save calibration data to a file or implement a mapping function
+    return calibration_data
+
+
 def run_calibration(nc: NanoControl, vis: Vision):
+    run_angle_calibration(nc, vis)
     pass
 
 
