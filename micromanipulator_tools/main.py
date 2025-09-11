@@ -44,6 +44,10 @@ def set_robot_speed(nc: NanoControl):
     nc.change_speed_profile_to(active_speed_profile)
 
 
+def run_calibration(nc: NanoControl, vis: Vision):
+    pass
+
+
 # -----------------------------------------------------------------------------
 # Detection Functions
 # -----------------------------------------------------------------------------
@@ -224,8 +228,8 @@ def touch_disk_from_level(nc: NanoControl):
 
 
 def move_to_rock_mapped_theta(nc: NanoControl, vis: Vision):
-    # get the angle of the rock wrt to its frame of ref.
-    # map that to the corresponding robot angle
+    # get the angle of the rock (right edge) wrt to its frame of ref.
+    # map that to the corresponding robot angle then add tolerance
     level_robot(nc, vis)
     # move base until that angle is satisfied. need to move both ways
 
@@ -293,10 +297,17 @@ def main():
         ) as vis,
     ):
         set_robot_speed(nc)
+
+        run_calibration(nc, vis)
+
         while is_rock_available(vis):
             rotate_rock_to_pickup_pos(nc, tt, vis)
             pickup_rock(nc, vis)
             deposit_rock(nc, vis)
+
+        # TODO make robot keep running maybe a pause function
+
+        # TODO the calibration data should be saved and only overwritten when a calibration procedure is run.
 
 
 if __name__ == "__main__":

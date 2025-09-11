@@ -135,6 +135,7 @@ class VisionBase:
     BLUE = (255, 0, 0)
     CYAN = (255, 255, 0)
     YELLOW = (0, 255, 255)
+    ELECTRIC_BLUE = (255, 100, 0)
     MAGENTA = (255, 0, 255)
     WHITE = (255, 255, 255)
     BLACK = (0, 0, 0)
@@ -179,12 +180,17 @@ class VisionBase:
     ROBOT_ARC_END_ANGLE = 270
     END_EFFECTOR_ARC_START_ANGLE = 243.7
     END_EFFECTOR_ARC_END_ANGLE = 270
+    END_EFFECTOR_ARC_THICKNESS = 2
 
     ROBOT_PRISM_LINK_HEIGHT_FACTOR = 2
     ROBOT_PRISM_LINK_WIDTH_FACTOR = 0.5
     ROBOT_TWEEZER_HEIGHT_FACTOR = 1.23
     ROBOT_TWEEZER_TIP_WIDTH_FACTOR = 0.2
     ROBOT_HEAD_MASK_OFFSET_PX = 10
+
+    CALIBRATION_MARKER_ANGLES = [0, 3, 6, 9, 12, 15, 18, 20, 22, 24, 26]
+    CALIBRATION_MARKER_RADIUS = 2
+    CALIBRATION_MARKER_THICKNESS = -1
 
     # -------------------------------------------------------------------------
     # File Path Management
@@ -1039,6 +1045,10 @@ class ObjectDetector(VisionBase):
             * np.sin(np.radians(self.END_EFFECTOR_ARC_END_ANGLE))
         )
 
+        marker_positions = self._detect_centre_arc_markers(
+            disk_center_px, disk_radius_px, self.CALIBRATION_MARKER_ANGLES
+        )
+
         return {
             "end_effector_arc": {
                 "center": end_effector_center,
@@ -1072,7 +1082,58 @@ class ObjectDetector(VisionBase):
                     end_effector_end_end_y,
                 ),
             ],
+            "calibration_markers": {
+                "positions": marker_positions,
+                "angles": self.CALIBRATION_MARKER_ANGLES,
+            },
         }
+
+    def _detect_centre_arc_markers(
+        self,
+        disk_center_px: Tuple[int, int],
+        disk_radius_px: int,
+        marker_angles: List[float],
+    ) -> List[Tuple[int, int]]:
+        """
+        Calculate pixel positions for angle markers on the centre arc.
+
+        Args:
+            disk_center_px: Center of the disk in pixels
+            disk_radius_px: Radius of the disk in pixels
+            marker_angles: List of angles in degrees (0° = up, clockwise positive)
+
+        Returns:
+            List of (x, y) pixel coordinates for each marker
+        """
+
+        # Calculate centre arc (end effector) geometry
+        end_effector_radius_px = int(disk_radius_px * self.CENTRAL_ARC_SCALE)
+        end_effector_center = (
+            disk_center_px[0],
+            disk_center_px[1] + end_effector_radius_px,
+        )
+
+        marker_positions = []
+
+        for angle_deg in marker_angles:
+            # Convert angle to radians (0° = up, clockwise positive)
+            angle_rad = np.radians(
+                -angle_deg - 90
+            )  # Subtract 90 to make 0° point up
+
+            # Calculate marker position on the centre arc
+            marker_x = int(
+                end_effector_center[0]
+                + end_effector_radius_px * np.cos(angle_rad)
+            )
+            marker_y = int(
+                end_effector_center[1]
+                + end_effector_radius_px * np.sin(angle_rad)
+            )
+
+            marker_positions.append((marker_x, marker_y))
+
+        return marker_positions
 
     # _detect_robot helper functions ------------------------------------------
 
@@ -1569,8 +1630,8 @@ class Visualizer(VisionBase):
             0,  # rotation angle
             end_effector_arc["start_angle"],
             end_effector_arc["end_angle"],
-            self.MAGENTA,
-            2,  # thickness
+            self.YELLOW,
+            self.END_EFFECTOR_ARC_THICKNESS,
         )
 
         # Draw the red arc (robot)
@@ -2080,6 +2141,12 @@ class Visualizer(VisionBase):
         # Visualize workspace arc
         vis_frame = self._visualize_workspace_arc(vis_frame, workspace_arcs)
 
+        if "calibration_markers" in workspace_arcs:
+            markers_data = workspace_arcs["calibration_markers"]
+            vis_frame = self._visualize_centre_arc_markers(
+                vis_frame, markers_data["positions"], markers_data["angles"]
+            )
+
         # Visualize robot if detected
         if robot_data:
             vis_frame = self._visualize_robot(
@@ -2138,6 +2205,42 @@ class Visualizer(VisionBase):
         self._draw_exit_instruction(display_frame)
 
         return display_frame
+
+    def _visualize_centre_arc_markers(
+        self,
+        frame: np.ndarray,
+        marker_positions: List[Tuple[int, int]],
+        marker_angles: List[float],
+    ) -> np.ndarray:
+        """
+        Draw angle markers on the centre arc with labels.
+        """
+        vis_frame = frame.copy()
+
+        for i, (pos, angle) in enumerate(zip(marker_positions, marker_angles)):
+            # Draw the marker circle
+            cv.circle(
+                vis_frame,
+                pos,
+                self.CALIBRATION_MARKER_RADIUS,
+                self.RED,
+                self.CALIBRATION_MARKER_THICKNESS,
+            )
+
+            # Add angle label next to marker
+            label_text = f"{angle}"
+            label_pos = (pos[0] - 5, pos[1] - 15)
+
+            self._draw_text(
+                vis_frame,
+                label_text,
+                label_pos,
+                self.RED,
+                0.5,
+                1,
+            )
+
+        return vis_frame
 
 
 class Vision(VisionBase):
