@@ -927,6 +927,7 @@ class ObjectDetector(VisionBase):
         contours, _ = cv.findContours(
             rock_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
         )
+
         if not contours:
             return []
 
@@ -1119,7 +1120,6 @@ class ObjectDetector(VisionBase):
 
         head_center, (head_width, head_height), head_angle_deg = head_rect
 
-        # --- START: Logic Copied from _find_prismatic_link_rect ---
         # This normalization MUST be identical to the link function's logic.
         if head_width < head_height:
             # Note: The link function subtracts 90, here we add it to make
@@ -1127,7 +1127,6 @@ class ObjectDetector(VisionBase):
             # The key is that the resulting angle's sign is predictable.
             # Let's stick to the original for perfect mirroring.
             head_angle_deg -= 90
-        # --- END: Logic Copied ---
 
         # Standardize dimensions for local coordinate calculations
         if head_width < head_height:
