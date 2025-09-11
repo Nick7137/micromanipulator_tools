@@ -179,8 +179,8 @@ class VisionBase:
     END_EFFECTOR_ARC_START_ANGLE = 243.7
     END_EFFECTOR_ARC_END_ANGLE = 270
 
-    ROBOT_TWEEZER_HEIGHT_FACTOR = 1.22
-    ROBOT_TWEEZER_TIP_WIDTH_FACTOR = 0.35
+    ROBOT_TWEEZER_HEIGHT_FACTOR = 1.23
+    ROBOT_TWEEZER_TIP_WIDTH_FACTOR = 0.2
     ROBOT_HEAD_MASK_OFFSET_PX = 10
 
     # -------------------------------------------------------------------------
@@ -1117,33 +1117,26 @@ class ObjectDetector(VisionBase):
         """
         TODO
         """
-
         head_center, (head_width, head_height), head_angle_deg = head_rect
 
         # This normalization MUST be identical to the link function's logic.
+        normalized_angle = head_angle_deg
+        width_for_calc = head_width
+        height_for_calc = head_height
+
         if head_width < head_height:
-            # Note: The link function subtracts 90, here we add it to make
-            # the local coordinate system consistent for our purpose.
-            # The key is that the resulting angle's sign is predictable.
-            # Let's stick to the original for perfect mirroring.
-            head_angle_deg -= 90
+            normalized_angle = head_angle_deg - 90
+            # When we adjust the angle, we also need to swap dimensions
+            width_for_calc = head_height
+            height_for_calc = head_width
 
-        # Standardize dimensions for local coordinate calculations
-        if head_width < head_height:
-            width, height = head_height, head_width
-        else:
-            width, height = head_width, head_height
+        # Define geometry relative to the NORMALIZED dimensions
+        tweezer_h = height_for_calc * self.ROBOT_TWEEZER_HEIGHT_FACTOR
+        base_w = width_for_calc
+        tip_w = width_for_calc * self.ROBOT_TWEEZER_TIP_WIDTH_FACTOR
 
-        # Define geometry relative to the head's dimensions
-        tweezer_h = height * self.ROBOT_TWEEZER_HEIGHT_FACTOR
-        base_w = width
-        tip_w = width * self.ROBOT_TWEEZER_TIP_WIDTH_FACTOR
-
-        # The link function effectively places the link on the "positive" side
-        # of its complex logic. We will do the opposite and place the tweezers
-        # on the "negative" side of the head's local coordinate system.
-        # This places them at the "front" of the robot.
-        y_base = -height / 2
+        # Place tweezers at the "front" of the robot
+        y_base = -height_for_calc / 2
         y_tip = y_base - tweezer_h
 
         local_points = np.array(
@@ -1156,11 +1149,8 @@ class ObjectDetector(VisionBase):
             dtype=np.float32,
         )
 
-        # Use the original, non-normalized angle for the final rotation
-        # to match the visual orientation from minAreaRect.
-        original_angle_deg = head_rect[2]
-
-        rad = np.radians(original_angle_deg)
+        # Use the NORMALIZED angle for rotation, not the original
+        rad = np.radians(normalized_angle)
         c, s = np.cos(rad), np.sin(rad)
         rot_matrix = np.array([[c, -s], [s, c]])
 
