@@ -149,6 +149,7 @@ class VisionBase:
     # Window name for the setup procedure
     SETUP_WINDOW_NAME = "Disk Positioning Setup"
     HEIGHT_SETUP_WINDOW_NAME = "Camera Height Setup"
+    ROBOT_SETUP_WINDOW_NAME = "Robot Positioning Setup"
 
     TARGET_DISK_RADIUS_OPTIMAL = 454
     RADIUS_TOLERANCE = 2
@@ -1264,7 +1265,6 @@ class ObjectDetector(VisionBase):
 
         return max(contours, key=cv.contourArea)
 
-    # TODO fix maybe?
     def _convert_cartesian_to_polar(
         self,
         disk_center_px: Tuple[int, int],
@@ -1272,33 +1272,35 @@ class ObjectDetector(VisionBase):
         point_px: Tuple[int, int],
     ) -> Tuple[float, float]:
         """
-        TODO converts pixel coords to polar coords in the frame of the
-        robot
+        Convert pixel coordinates to polar coordinates with origin at robot arc center.
+
+        Returns:
+            Tuple[float, float]: (radius_pixels, angle_deg) where:
+                - radius_pixels: distance from robot arc center
+                - angle_deg: angle in degrees (0° pointing up, positive clockwise)
         """
 
-        scaling = self.BASE_TO_DISK_CENTER_MM / self.DISK_RADIUS_MM
+        # Calculate robot arc center (this should match your workspace arc calculation)
+        robot_top_y = int(
+            disk_center_px[1] + disk_radius_px * self.ROBOT_ARC_MAX_SCALE
+        )
+        robot_radius_px = int(disk_radius_px * self.ROBOT_ARC_RADIUS_SCALE)
+        robot_arc_center = (disk_center_px[0], robot_top_y + robot_radius_px)
 
-        # X coord is in the disk center.
-        origin_x_px = disk_center_px[0]
-        origin_y_px = disk_center_px[1] + disk_radius_px * scaling
+        # Calculate displacement from robot arc center
+        dx_px = robot_arc_center[0] - point_px[0]
+        dy_px = point_px[1] - robot_arc_center[1]
 
-        # # Calculate displacement from origin, note, we are also
-        # # changing the coordinate system with these operations to make
-        # # y point up from the origin and x point to the right.
+        # Calculate radius (distance from origin)
+        radius_px = np.sqrt(dx_px**2 + dy_px**2)
 
-        point_new_x_px = point_px[0] - origin_x_px
-        point_new_y_px = origin_y_px - point_px[1]
-
-        # Changing the frame to have the x axis pointing up and the y
-        # axis pointing to the left.
-        radius_px = np.sqrt(point_new_x_px**2 + point_new_y_px**2)
-
-        angle_rad = np.arctan2(point_new_y_px, point_new_x_px)
+        # Calculate angle (0° pointing up, positive clockwise)
+        angle_rad = np.arctan2(
+            dx_px, -dy_px
+        )  # Note: -dy_px to make 0° point up
         angle_deg = np.degrees(angle_rad)
 
-        # Convert to robot's coordinate system (0 deg is up)
-        robot_angle_deg = angle_deg - 90
-        return (radius_px, robot_angle_deg)
+        return (radius_px, angle_deg)
 
     # _detect_rocks helper functions ------------------------------------------
 
@@ -1473,9 +1475,8 @@ class Visualizer(VisionBase):
         contour: np.ndarray,
     ) -> np.ndarray:
         """
-        TODO
+        Visualize robot with polar coordinates display.
         """
-
         vis_frame = frame.copy()
 
         # Draw the contour of the robot body
@@ -1485,8 +1486,8 @@ class Visualizer(VisionBase):
         cv.circle(vis_frame, centroid_px, 4, self.RED, -1)
 
         # Create the label text with the polar coordinates
-        radius, angle = polar_coords
-        label_text = "Robot"
+        radius_px, angle_deg = polar_coords
+        label_text = f"Robot: r={radius_px:.1f}px, a={angle_deg:.1f}deg"
 
         # Position and draw the text label
         label_pos = (centroid_px[0] + 10, centroid_px[1])
@@ -2090,6 +2091,47 @@ class Visualizer(VisionBase):
         self._add_status_overlay(display_frame, results)
         return display_frame
 
+    def visualize_robot_setup_frame(
+        self,
+        frame: np.ndarray,
+        disk_center: Tuple[int, int],
+        disk_radius: int,
+    ) -> np.ndarray:
+        """
+        Create a simple robot positioning setup visualization frame.
+        """
+        display_frame = frame.copy()
+        h, w = display_frame.shape[:2]
+
+        # Draw the disk
+        cv.circle(display_frame, disk_center, disk_radius, self.CYAN, 2)
+
+        # Draw outer ring for clarity (larger circle around the target)
+        cv.circle(display_frame, disk_center, 20, self.BLACK, 1)
+
+        # Draw the center dot (very small and precise)
+        cv.circle(display_frame, disk_center, 2, self.RED, -1)
+
+        # Simple instruction text
+        instruction_text = "Press 'Enter' when robot tip is precisely over the dot and robot is touching the disk"
+        text_size = cv.getTextSize(
+            instruction_text, cv.FONT_HERSHEY_SIMPLEX, 0.8, 2
+        )[0]
+        text_x = (w - text_size[0]) // 2
+
+        self._draw_text(
+            display_frame,
+            instruction_text,
+            (text_x, h // 2 - 100),
+            self.WHITE,
+            0.8,
+            2,
+        )
+
+        self._draw_exit_instruction(display_frame)
+
+        return display_frame
+
 
 class Vision(VisionBase):
     """
@@ -2163,6 +2205,9 @@ class Vision(VisionBase):
         self._stable_orientation_angle: Optional[float] = None
 
         self._perform_post_setup_calibration()
+
+        # Add robot positioning setup here
+        self._run_robot_setup()
 
         # Create the attributes for the processing thread.
         self._processing_lock = threading.Lock()
@@ -2474,6 +2519,52 @@ class Vision(VisionBase):
                         print(
                             "Position/orientation not aligned. Please adjust."
                         )
+
+        cv.destroyAllWindows()
+
+    def _run_robot_setup(self):
+        """
+        Simple robot positioning setup - just wait for user confirmation.
+        """
+        print(
+            "\nVision: Position robot tip over center dot and touching disk..."
+        )
+
+        while not self.camera_manager.stopped:
+            try:
+                # Get frame and process it
+                raw_frame = self.camera_manager._capture_frame()
+                scaled_frame = self.frame_processor._scale_frame(raw_frame)
+                processed_frame = self.frame_processor._rotate_frame(
+                    scaled_frame, self._stable_orientation_angle
+                )
+
+                # Use the stable disk parameters
+                disk_center = self._stable_straightened_disk_center
+                disk_radius = self._stable_disk_radius
+
+                # Create simple display frame
+                display_frame = self.visualizer.visualize_robot_setup_frame(
+                    processed_frame, disk_center, disk_radius
+                )
+
+                # Display the frame
+                cv.imshow(self.ROBOT_SETUP_WINDOW_NAME, display_frame)
+
+                # Handle user input
+                key = cv.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    cv.destroyAllWindows()
+                    raise VisionSetupCancelledError(
+                        "User requested program exit during robot setup"
+                    )
+                elif key == 13:  # Enter key
+                    cv.destroyAllWindows()
+                    print("Robot positioning setup complete!")
+                    break
+
+            except VisionConnectionError:
+                time.sleep(0.1)
 
         cv.destroyAllWindows()
 

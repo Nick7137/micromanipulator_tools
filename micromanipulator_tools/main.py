@@ -16,7 +16,7 @@ from micromanipulator_tools import NanoControl, Turntable, Vision
 
 SPEED_PRESETS = {
     1: {
-        "base_joint": "c32",
+        "base_joint": "c16",
         "elbow_joint": "c64",
         "prismatic_joint": "c64",
         "tweezer_joint": "c64",
@@ -29,6 +29,8 @@ SPEED_PRESETS = {
 # without holding a rock
 RISE_TIME_NO_ROCK_SEC = 3
 
+TOL_PX = 4
+
 
 def main():
     with (
@@ -40,9 +42,35 @@ def main():
             calibration_debug=False,
         ) as vis,
     ):
+        time.sleep(1)
+
+        # def level_robot():
+        #     polar_coords, centroid_px, body_contour = vis.detect_robot()
+        #     radius, angle = polar_coords
+
+        #     # Get the robot arc radius from vision
+        #     workspace_arcs = vis.detect_workspace_arcs()
+        #     robot_arc_radius = workspace_arcs["robot_arc"]["radius"]
+
+        #     if radius < robot_arc_radius - TOL_PX:
+        #         reverse = True
+        #     elif radius > robot_arc_radius + TOL_PX:
+        #         reverse = False
+        #     else:
+        #         return
+
+        #     while radius != robot_arc_radius:
+        #         nc.drive_elbow_joint(reverse=reverse)
+
+        #     nc.stop()
+
+        nc.stop()
+
         active_speed_profile = 1
         nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
         nc.change_speed_profile_to(active_speed_profile)
+
+        # level_robot()
 
         # nc.drive_elbow_joint()
         # time.sleep(RISE_TIME_NO_ROCK_SEC)
@@ -52,7 +80,7 @@ def main():
 
         # tt.rotate(60, reverse=False)
 
-        nc.drive_base_joint(reverse=True)
+        # nc.drive_base_joint(reverse=True)
         # nc.drive_elbow_joint()
         # nc.drive_prismatic_joint(reverse=True)
         # nc.drive_tweezers()
@@ -67,7 +95,7 @@ def main():
         #     nc.drive_base_joint(reverse=False)
         #     time.sleep(5)
 
-        nc.stop()
+        # nc.stop()
 
         # vis.detect_disk(True)
         # vis.detect_robot(True)
