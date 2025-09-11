@@ -17,7 +17,7 @@ from micromanipulator_tools import NanoControl, Turntable, Vision
 SPEED_PRESETS = {
     1: {
         "base_joint": "c16",
-        "elbow_joint": "c64",
+        "elbow_joint": "c16",
         "prismatic_joint": "c64",
         "tweezer_joint": "c64",
     },
@@ -29,7 +29,7 @@ SPEED_PRESETS = {
 # without holding a rock
 RISE_TIME_NO_ROCK_SEC = 3
 
-TOL_PX = 4
+TOL_PX = 0
 
 
 def main():
@@ -42,35 +42,62 @@ def main():
             calibration_debug=False,
         ) as vis,
     ):
-        time.sleep(1)
 
-        # def level_robot():
-        #     polar_coords, centroid_px, body_contour = vis.detect_robot()
-        #     radius, angle = polar_coords
+        def get_current_robot_radius():
+            polar_coords, centroid_px, body_contour = vis.detect_robot()
+            radius, angle = polar_coords
+            return radius
 
-        #     # Get the robot arc radius from vision
-        #     workspace_arcs = vis.detect_workspace_arcs()
-        #     robot_arc_radius = workspace_arcs["robot_arc"]["radius"]
+        def level_robot():
+            radius = get_current_robot_radius()
 
-        #     if radius < robot_arc_radius - TOL_PX:
-        #         reverse = True
-        #     elif radius > robot_arc_radius + TOL_PX:
-        #         reverse = False
-        #     else:
-        #         return
+            # Get the robot arc radius from vision
+            workspace_arcs = vis.detect_workspace_arcs()
+            robot_arc_radius = workspace_arcs["robot_arc"]["radius"]
 
-        #     while radius != robot_arc_radius:
-        #         nc.drive_elbow_joint(reverse=reverse)
+            if radius < (robot_arc_radius - TOL_PX):
+                while radius < robot_arc_radius:
+                    radius = get_current_robot_radius()
+                    nc.drive_elbow_joint(reverse=True)
+            elif radius > (robot_arc_radius + TOL_PX):
+                while radius > robot_arc_radius:
+                    radius = get_current_robot_radius()
+                    nc.drive_elbow_joint(reverse=False)
+            else:
+                pass
 
-        #     nc.stop()
+            nc.stop()
 
-        nc.stop()
+        def go_down_from_level():
+            nc.drive_elbow_joint(True)
+            time.sleep(3.5)
+            nc.stop()
+
+        def open_tweezers():
+            nc.drive_tweezers(True)
+            time.sleep(18)
+            nc.stop()
+
+        def close_tweezers():
+            nc.drive_tweezers(False)
+            time.sleep(18)
+            nc.stop()
 
         active_speed_profile = 1
         nc.set_speed_profile(active_speed_profile, SPEED_PRESETS[1])
         nc.change_speed_profile_to(active_speed_profile)
 
-        # level_robot()
+        time.sleep(1)
+        level_robot()
+        time.sleep(1)
+        go_down_from_level()
+        time.sleep(1)
+        level_robot()
+        time.sleep(1)
+
+        open_tweezers()
+        close_tweezers()
+        # open_tweezers()
 
         # nc.drive_elbow_joint()
         # time.sleep(RISE_TIME_NO_ROCK_SEC)

@@ -172,7 +172,7 @@ class VisionBase:
 
     # When the robot is raised from the floor (elbow) for 3 seconds,
     # at speed c32, the centroid of the robot head follows this arc.
-    ROBOT_ARC_MAX_SCALE = CENTRAL_ARC_SCALE - 1.6
+    ROBOT_ARC_MAX_SCALE = CENTRAL_ARC_SCALE - 1.61
     ROBOT_ARC_RADIUS_SCALE = 2.1
 
     ROBOT_ARC_START_ANGLE = 244
