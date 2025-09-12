@@ -492,7 +492,7 @@ def move_robot_to_rock(nc: NanoControl, vis: Vision):
 def grab_rock(nc: NanoControl, vis: Vision):
     # Undo the motion of the depositing
     nc.drive_base_joint(reverse=True)
-    time.sleep(DROP_OFF_EXTRA_TIME_SEC)
+    time.sleep(DROP_OFF_EXTRA_TIME_SEC + 2)
     nc.stop()
 
     move_robot_to_rock(nc, vis)
@@ -564,8 +564,6 @@ def main():
 
         time.sleep(1)
 
-        # run_calibration(nc, vis)
-
         # Essentially move the robot offscreen in a controlled manner.
         move_offscreen(nc, vis)
 
@@ -574,16 +572,6 @@ def main():
             grab_rock(nc, vis)
             deposit_rock(nc, vis)
 
-            time.sleep(4)
-
-            # grab_rock(nc, vis)
-            # deposit_rock(nc, vis)
-
-        # while True:
-        #     # rotate_rock_to_pickup_pos(nc, tt, vis)
-        #     level_robot(nc, vis)
-        #     time.sleep(3)
-
         # TODO make robot keep running maybe a pause function
 
         # TODO the calibration data should be saved and only overwritten when a calibration procedure is run.
@@ -591,18 +579,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# while True:
-#     level_robot(nc, vis)
-#     time.sleep(3)
-# time.sleep(1)
-# touch_disk_from_level(nc)
-# time.sleep(1)
-# level_robot(nc, vis)
-# time.sleep(1)
-
-# while True:
-#     time.sleep(1)
-#     rotate_rock_to_pickup_pos()
-#     time.sleep(2)

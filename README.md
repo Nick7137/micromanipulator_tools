@@ -1,5 +1,16 @@
 TODO
 
+create video on setup
+
+
+talk about main py
+talk about utils
+
+add link to github
+
+THE LATEST VERSION IS ON GITHUB
+
+
 
 ---------------- Installing the Python environment on your personal machine ----------------
 

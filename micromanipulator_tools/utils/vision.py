@@ -1,16 +1,13 @@
 # TODO get rid of all TODO's
 # TODO make file header comment
-# TODO make the docstrings
+# TODO make the docstrings ask gpt conform to PEP8 please!!!
 # TODO make all errors have the name of the class in them.
 # TODO check for any inconsistencies at all
+# TODO remove any duplicate code
 # TODO why is it so slow on startup - optimise for efficiency
 # TODO check the prefixing for all the errors and make them make sense.
 # TODO update the init.py file
 # TODO input output of each method.
-# TODO maybe do the visualize orientation line.
-# TODO put text on the visualizations.
-# TODO correct the angle for the robot.
-# TODO make the orientation correction work for different scale factors
 
 import os
 import glob
@@ -3096,25 +3093,3 @@ class VisionSetupCancelledError(VisionError):
     @tested
     def __init__(self, message: str = "Setup cancelled by user") -> None:
         super().__init__(f"Vision: {message}")
-
-
-import keyboard
-
-if __name__ == "__main__":
-    with Vision(
-        enable_visualization=True,
-        frame_scale_factor=0.8,
-        calibration_debug=False,
-    ) as vis:
-        while True:
-            # Get the latest pre-computed frame.
-            frame, results = vis.get_latest_output()
-
-            if keyboard.is_pressed("/"):
-                print("'/' key detected, exiting...\n")
-                break
-
-            # Small delay to prevent excessive CPU usage
-            time.sleep(0.01)
-
-        print("Program ended.")
