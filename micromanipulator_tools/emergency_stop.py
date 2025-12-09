@@ -1,3 +1,7 @@
+"""
+Run this code to stop all motion on the NanoControl
+"""
+
 import sys
 import os
 

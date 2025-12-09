@@ -32,7 +32,7 @@ RISE_TIME_NO_ROCK_SEC = 3
 TOL_PX = 2
 ROCK_POS_TOL_ANGLE = 0.5
 TWEEZER_MOVE_TIME_SEC = 6
-TWEEZER_PARTIAL_OPEN_SEC = 3
+TWEEZER_PARTIAL_OPEN_SEC = 5.5
 TWEEZER_PARTIAL_CLOSE_SEC = 6
 TWEEZER_FULL_CLOSE_SEC = 6
 TWEEZER_FULL_OPEN_SEC = 6
@@ -449,10 +449,6 @@ def move_robot_to_angle(nc: NanoControl, vis: Vision, target_angle: float):
 
         angle_error_abs = abs(angle_error)
 
-        print(
-            f"Current angle: {current_angle:.1f}°, Target: {target_angle:.1f}°, Error: {angle_error:.1f}°"
-        )
-
         # Check if we've reached the target
         if angle_error_abs <= ROCK_POS_TOL_ANGLE:
             nc.stop()
@@ -492,13 +488,16 @@ def move_robot_to_rock(nc: NanoControl, vis: Vision):
 def grab_rock(nc: NanoControl, vis: Vision):
     # Undo the motion of the depositing
     nc.drive_base_joint(reverse=True)
-    time.sleep(DROP_OFF_EXTRA_TIME_SEC + 2)
+    time.sleep(DROP_OFF_EXTRA_TIME_SEC + 3)
     nc.stop()
 
     move_robot_to_rock(nc, vis)
-    open_tweezers(nc, TWEEZER_FULL_OPEN_SEC)
+    open_tweezers(nc, TWEEZER_PARTIAL_OPEN_SEC)
     touch_disk_from_level(nc)
-    close_tweezers(nc, TWEEZER_PARTIAL_CLOSE_SEC)
+    # nc.drive_elbow_joint(reverse=True)
+    # time.sleep(0.4)
+    # nc.stop()
+    close_tweezers(nc, TWEEZER_FULL_CLOSE_SEC)
 
 
 def move_offscreen(nc: NanoControl, vis: Vision):
@@ -510,7 +509,6 @@ def move_offscreen(nc: NanoControl, vis: Vision):
     # Rotate base joint counter clockwise until reaching threshold
     while current_angle < DROP_OFF_ANGLE_THRESHOLD_DEG:
         current_angle = get_current_robot_theta_deg(vis)
-        print(f"current angle: {current_angle}")
         nc.drive_base_joint()  # Counter clockwise
 
     # Continue moving in same direction for some extra time

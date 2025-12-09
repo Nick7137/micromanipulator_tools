@@ -158,8 +158,8 @@ class VisionBase:
     SETUP_TARGET_Y_POSITION_FACTOR = 0.5
 
     # Tolerances for the setup to be considered "OK"
-    SETUP_POSITION_TOLERANCE_PX = 5
-    SETUP_ANGLE_TOLERANCE_DEG = 0.3
+    SETUP_POSITION_TOLERANCE_PX = 8
+    SETUP_ANGLE_TOLERANCE_DEG = 0.7
 
     MAIN_DISPLAY_WINDOW_NAME = "Vision Real-time Detection"
     DISPLAY_REFRESH_RATE_MS = 30
