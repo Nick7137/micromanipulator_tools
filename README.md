@@ -1,3 +1,16 @@
+To create the .venv folder required in this folder, use the following commands. first install the uv manager once on your system using:
+
+    # Install uv once
+    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+then run in vscode powershell terminal:
+
+    uv python pin 3.11.7
+    uv venv
+    uv pip install -r requirements.txt
+
+this will install the correct python version in the current folder and all the packages needed, the pyproject.toml will not let you procees
+unless you have the python version 3.11.7
 
 TODO everything in VSCODE
 
